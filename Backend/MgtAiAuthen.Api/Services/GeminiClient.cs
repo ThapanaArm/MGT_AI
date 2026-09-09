@@ -217,6 +217,7 @@ public class GeminiClient : IAiProvider
                     break;
 
                 case FileKinds.Text:
+                case FileKinds.Spreadsheet:
                     // Gemini has no titled plain-text document part, so the file name is carried
                     // in a fenced label instead — without it the model cannot tell which file a
                     // figure came from when several are attached.

@@ -33,15 +33,30 @@ public interface IAttachmentService
 
     /// <summary>ลบไฟล์ที่เก็บไปแล้ว (ใช้ตอน rollback)</summary>
     void TryDelete(string relativePath);
+
+    /// <summary>
+    /// Turns a stored file's bytes into the text sent to the model, or null for kinds the model
+    /// reads natively (PDF, images).
+    ///
+    /// Public because follow-up turns re-read attachments from disk to rebuild the conversation,
+    /// and that path needs exactly the same conversion. It previously did
+    /// <c>Encoding.UTF8.GetString(bytes)</c> inline, which is right for a .txt and produces
+    /// binary garbage for a workbook.
+    /// </summary>
+    string? ExtractText(string fileKind, byte[] content, string fileName);
 }
 
 public class AttachmentService(
     IOptions<UploadOptions> options,
     IHostEnvironment environment,
+    ISpreadsheetTextExtractor spreadsheets,
     ILogger<AttachmentService> logger) : IAttachmentService
 {
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
     private static readonly string[] TextExtensions = [".txt", ".csv", ".md", ".json", ".log"];
+
+    /// <summary>.xlsm is deliberately absent — macros are an execution risk and only cells are read.</summary>
+    private static readonly string[] SpreadsheetExtensions = [".xlsx", ".xls"];
 
     private readonly UploadOptions _options = options.Value;
 
@@ -187,7 +202,9 @@ public class AttachmentService(
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         await File.WriteAllBytesAsync(fullPath, content, ct);
 
-        string? extractedText = kind == FileKinds.Text ? DecodeText(content) : null;
+        // Runs before the file is announced as accepted: an unreadable workbook must be rejected
+        // here rather than stored and then silently sent to the AI as nothing.
+        string? extractedText = ExtractText(kind, content, fileName);
 
         return new StoredFile(
             FileName: fileName,
@@ -204,6 +221,7 @@ public class AttachmentService(
         if (ImageExtensions.Contains(extension)) return FileKinds.Image;
         if (extension == ".pdf") return FileKinds.Pdf;
         if (TextExtensions.Contains(extension)) return FileKinds.Text;
+        if (SpreadsheetExtensions.Contains(extension)) return FileKinds.Spreadsheet;
 
         throw new AppException($"Unsupported file extension \"{extension}\"");
     }
@@ -218,6 +236,18 @@ public class AttachmentService(
         {
             FileKinds.Pdf => content.Length > 4 && content[0] == 0x25 && content[1] == 0x50
                              && content[2] == 0x44 && content[3] == 0x46,   // %PDF
+            // .xlsx is a ZIP container, so this only proves "some zip"; the real check is whether
+            // the spreadsheet reader can parse it, which happens during extraction below.
+            FileKinds.Spreadsheet => extension switch
+            {
+                ".xlsx" => content.Length > 4 && content[0] == 0x50 && content[1] == 0x4B
+                           && content[2] == 0x03 && content[3] == 0x04,          // PK.. (zip)
+                ".xls" => content.Length > 8 && content[0] == 0xD0 && content[1] == 0xCF
+                          && content[2] == 0x11 && content[3] == 0xE0
+                          && content[4] == 0xA1 && content[5] == 0xB1
+                          && content[6] == 0x1A && content[7] == 0xE1,           // OLE2 compound file
+                _ => true,
+            },
             FileKinds.Image => extension switch
             {
                 ".png" => content.Length > 8 && content[0] == 0x89 && content[1] == 0x50
@@ -237,6 +267,13 @@ public class AttachmentService(
                 $"File \"{fileName}\" content does not match its {extension} extension — rejected for security reasons");
         }
     }
+
+    public string? ExtractText(string fileKind, byte[] content, string fileName) => fileKind switch
+    {
+        FileKinds.Text => DecodeText(content),
+        FileKinds.Spreadsheet => spreadsheets.Extract(content, fileName),
+        _ => null,
+    };
 
     /// <summary>Decodes a text file as UTF-8 (honouring a BOM) and truncates it past the configured limit.</summary>
     private string? DecodeText(byte[] content)

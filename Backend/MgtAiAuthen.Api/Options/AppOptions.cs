@@ -148,6 +148,7 @@ public class UploadOptions
         ".png", ".jpg", ".jpeg", ".webp", ".gif",
         ".pdf",
         ".txt", ".csv", ".md", ".json", ".log",
+        ".xlsx", ".xls",
     ];
 
     /// <summary>
@@ -167,6 +168,14 @@ public class UploadOptions
 
     /// <summary>ตัดเนื้อหาไฟล์ข้อความที่ยาวเกินนี้ (characters) ก่อนส่งให้ AI</summary>
     public int MaxTextChars { get; set; } = 200_000;
+
+    /// <summary>
+    /// จำนวนแถวสูงสุดที่อ่านต่อชีต
+    ///
+    /// .xlsx เป็นไฟล์ zip ที่ขยายตัวได้มาก — ไฟล์ 2 MB อาจกลายเป็นข้อความหลายสิบล้านตัวอักษร
+    /// เพดานนี้กันทั้งเรื่องหน่วยความจำและค่า token ที่จะบานปลาย (MaxTextChars กันอีกชั้น)
+    /// </summary>
+    public int MaxSpreadsheetRows { get; set; } = 2000;
 
     public long MaxFileBytes => (long)MaxFileMb * 1024 * 1024;
     public long MaxTotalBytesPerMessage => (long)MaxTotalMbPerMessage * 1024 * 1024;

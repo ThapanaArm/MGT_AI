@@ -184,7 +184,7 @@ public class ChatService(
                     StoredPath = file.RelativePath,
                     IsTextExtracted = file.ExtractedText is not null,
                     ExtractedChars = file.ExtractedText?.Length,
-                    PolicyScanned = file.FileKind == FileKinds.Text,
+                    PolicyScanned = FileKinds.CarriesText(file.FileKind),
                     CreatedAt = DateTime.Now,
                 };
 
@@ -198,7 +198,7 @@ public class ChatService(
                 $"Attached {storedFiles.Count} file(s) to message {userMessage.MessageId}: " +
                 string.Join(" | ", storedFiles.Select(f =>
                     $"{f.FileName} ({f.FileKind}, {f.SizeBytes / 1024.0:F1} KB, sha256 {f.Sha256[..12]}…" +
-                    $"{(f.FileKind == FileKinds.Text ? ", content scanned" : ", file name only scanned")})")),
+                    $"{(FileKinds.CarriesText(f.FileKind) ? ", content scanned" : ", file name only scanned")})")),
                 isSuccess: true, ct);
         }
 
@@ -432,9 +432,9 @@ public class ChatService(
                             meta.ContentType,
                             meta.FileKind,
                             bytes,
-                            meta.FileKind == FileKinds.Text
-                                ? System.Text.Encoding.UTF8.GetString(bytes)
-                                : null));
+                            // Same conversion the upload path used — a workbook must be
+                            // re-extracted here, not UTF-8 decoded.
+                            attachments.ExtractText(meta.FileKind, bytes, meta.FileName)));
                     }
                     catch (Exception ex)
                     {

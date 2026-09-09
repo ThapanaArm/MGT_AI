@@ -221,6 +221,7 @@ public class ClaudeClient : IAiProvider
                     break;
 
                 case FileKinds.Text:
+                case FileKinds.Spreadsheet:
                     blocks.Add(new DocumentBlockParam
                     {
                         Source = new PlainTextSource { Data = attachment.Text ?? string.Empty },

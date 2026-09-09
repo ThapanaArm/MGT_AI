@@ -221,6 +221,7 @@ public class OpenAiClient : IAiProvider
                     break;
 
                 case FileKinds.Text:
+                case FileKinds.Spreadsheet:
                     // input_file expects a document format; a plain text file is clearer as a
                     // labelled text part, which also keeps the file name visible to the model.
                     content.Add(new

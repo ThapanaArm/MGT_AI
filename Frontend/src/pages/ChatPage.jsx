@@ -23,6 +23,7 @@ function guessKind(fileName) {
   const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
   if (['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) return 'Image';
   if (ext === '.pdf') return 'Pdf';
+  if (['.xlsx', '.xls'].includes(ext)) return 'Spreadsheet';
   return 'Text';
 }
 

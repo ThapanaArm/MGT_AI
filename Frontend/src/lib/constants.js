@@ -117,6 +117,7 @@ export function formatFileSize(bytes) {
 export function fileKindIcon(fileKind) {
   if (fileKind === 'Image') return '🖼️';
   if (fileKind === 'Pdf') return '📄';
+  if (fileKind === 'Spreadsheet') return '📊';
   return '📝';
 }
 
@@ -124,6 +125,7 @@ export const FILE_KIND_LABELS = {
   Image: 'Image',
   Pdf: 'PDF',
   Text: 'Text file',
+  Spreadsheet: 'Excel workbook',
 };
 
 /** yyyy-MM-dd for <input type="date">, using local time rather than UTC. */

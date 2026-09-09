@@ -256,6 +256,24 @@ public static class FileKinds
 
     /// <summary>Text file — content can be screened against policy and is sent as a plain-text document.</summary>
     public const string Text = "Text";
+
+    /// <summary>
+    /// Excel workbook (.xlsx/.xls) — no provider can read one, so the cells are converted to text
+    /// server-side. That makes it behave like a text file from here on: screened by content, and
+    /// sent to the model as a plain-text document.
+    /// </summary>
+    public const string Spreadsheet = "Spreadsheet";
+
+    /// <summary>
+    /// Kinds whose content is turned into text, and therefore screened against PolicyRules by
+    /// content rather than by file name only.
+    ///
+    /// A helper rather than a comparison repeated at each call site: adding this kind touched
+    /// six places, and the equivalent drift when a third AI provider was added left a validation
+    /// attribute behind that silently rejected it.
+    /// </summary>
+    public static bool CarriesText(string? fileKind)
+        => fileKind is Text or Spreadsheet;
 }
 
 /// <summary>

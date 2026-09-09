@@ -152,6 +152,7 @@ builder.Services.AddHttpClient(OpenAiClient.HttpClientName, (services, client) =
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IPolicyService, PolicyService>();
 builder.Services.AddScoped<ICostCalculator, CostCalculator>();
+builder.Services.AddSingleton<ISpreadsheetTextExtractor, SpreadsheetTextExtractor>();
 builder.Services.AddSingleton<IAttachmentService, AttachmentService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();

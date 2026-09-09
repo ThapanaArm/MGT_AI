@@ -62,7 +62,7 @@ public class ChatController(
         _uploads.MaxTotalMbPerMessage,
         _uploads.EffectiveExtensions,
         // Only these types have their content read and screened against the policy rules.
-        [".txt", ".csv", ".md", ".json", ".log"]));
+        [".txt", ".csv", ".md", ".json", ".log", ".xlsx", ".xls"]));
 
     /// <summary>
     /// Models the signed-in user may pick from — every model with active pricing, cheapest first.
