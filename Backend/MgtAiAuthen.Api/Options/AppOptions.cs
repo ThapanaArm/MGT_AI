@@ -47,6 +47,16 @@ public class ClaudeOptions
     public string CodeSystemPrompt { get; set; } = string.Empty;
 
     /// <summary>
+    /// How to write something meant to be exported as a report, appended like
+    /// <see cref="ChartSystemPrompt"/>.
+    ///
+    /// Needed because the general prompt caps answers at six lines to keep chat fast — a report
+    /// asked for on purpose has to be allowed to break that, or the export produces a six-line
+    /// document.
+    /// </summary>
+    public string ReportSystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>
     /// How to emit a chart, appended to whichever mode prompt is in use.
     ///
     /// Kept as its own setting rather than pasted into both prompts: the schema has to match

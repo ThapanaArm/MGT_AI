@@ -1405,3 +1405,15 @@ tbody tr:last-child td {
   max-width: none;
   width: 100%;
 }
+
+/* ปุ่มส่งออกรายงานใต้คำตอบของ AI */
+.export-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-faint);
+}
+
+.export-row .btn-link {
+  font-size: 0.76rem;
+}

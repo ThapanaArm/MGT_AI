@@ -3,6 +3,7 @@ using MgtAiAuthen.Api.Data;
 using MgtAiAuthen.Api.Options;
 using MgtAiAuthen.Api.Security;
 using MgtAiAuthen.Api.Services;
+using MgtAiAuthen.Api.Services.Reporting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -18,6 +19,7 @@ namespace MgtAiAuthen.Api.Controllers;
 public class ChatController(
     IChatService chat,
     IAiClient ai,
+    IReportService reports,
     IOptions<UploadOptions> uploadOptions) : ControllerBase
 {
     private readonly UploadOptions _uploads = uploadOptions.Value;
@@ -144,6 +146,28 @@ public class ChatController(
 
         return File(content, meta.ContentType, meta.FileName);
     }
+
+    /// <summary>
+    /// ส่งออกคำตอบของ AI เป็นรายงาน — xlsx | pdf | docx | pptx
+    ///
+    /// เจ้าของบทสนทนา หรือ Admin/Auditor เท่านั้น และการส่งออกทุกครั้งถูกบันทึกลง audit log
+    /// (ไฟล์รายงานออกจากระบบไปได้ จึงต้องรู้ว่าใครเอาอะไรออกไปเมื่อไหร่)
+    /// </summary>
+    [HttpGet("messages/{messageId:long}/export/{format}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiError), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> ExportReport(long messageId, string format, CancellationToken ct)
+    {
+        ReportFile file = await reports.ExportMessageAsync(
+            messageId, format, User.GetUserId(), User.CanReadAllLogs(), ct);
+
+        return File(file.Content, file.ContentType, file.FileName);
+    }
+
+    /// <summary>รูปแบบไฟล์ที่ส่งออกได้ — frontend ใช้สร้างปุ่ม</summary>
+    [HttpGet("export-formats")]
+    public IActionResult ExportFormats() => Ok(ReportFormats.All);
 
     /// <summary>Hides one of your own conversations — messages stay in the database for auditing.</summary>
     [HttpDelete("sessions/{sessionId:guid}")]

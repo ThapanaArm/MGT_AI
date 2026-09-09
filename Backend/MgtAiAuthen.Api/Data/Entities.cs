@@ -46,6 +46,7 @@ public static class AuditActions
     public const string FileUploaded = "FILE_UPLOADED";
     public const string FileRejected = "FILE_REJECTED";
     public const string FileDownloaded = "FILE_DOWNLOADED";
+    public const string ReportExported = "REPORT_EXPORTED";
 
     public const string ChatLogSearched = "CHAT_LOG_SEARCHED";
     public const string ChatLogExported = "CHAT_LOG_EXPORTED";

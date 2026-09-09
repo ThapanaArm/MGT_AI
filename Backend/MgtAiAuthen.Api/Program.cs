@@ -5,6 +5,7 @@ using MgtAiAuthen.Api.Infrastructure;
 using MgtAiAuthen.Api.Options;
 using MgtAiAuthen.Api.Security;
 using MgtAiAuthen.Api.Services;
+using MgtAiAuthen.Api.Services.Reporting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -154,6 +155,14 @@ builder.Services.AddScoped<IPolicyService, PolicyService>();
 builder.Services.AddScoped<ICostCalculator, CostCalculator>();
 builder.Services.AddSingleton<ISpreadsheetTextExtractor, SpreadsheetTextExtractor>();
 builder.Services.AddSingleton<IAttachmentService, AttachmentService>();
+
+// Report export: one writer per format, resolved by IReportService from the requested format.
+builder.Services.AddSingleton<IReportFontProvider, ReportFontProvider>();
+builder.Services.AddSingleton<IReportWriter, ExcelReportWriter>();
+builder.Services.AddSingleton<IReportWriter, PdfReportWriter>();
+builder.Services.AddSingleton<IReportWriter, WordReportWriter>();
+builder.Services.AddSingleton<IReportWriter, PowerPointReportWriter>();
+builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IChatLogService, ChatLogService>();

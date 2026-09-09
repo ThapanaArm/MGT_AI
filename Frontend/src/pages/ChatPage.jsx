@@ -11,6 +11,14 @@ import {
   questionTypeLabel,
 } from '../lib/constants';
 
+/** รูปแบบที่ส่งออกได้ — ตรงกับ ReportFormats ฝั่ง backend */
+const EXPORT_FORMATS = [
+  { format: 'xlsx', label: 'Excel', title: 'ตารางแยกชีต เปิดใน Excel แล้วกรอง/รวมยอดต่อได้' },
+  { format: 'pdf', label: 'PDF', title: 'รายงานพร้อมส่ง อ่านได้ทุกเครื่อง' },
+  { format: 'docx', label: 'Word', title: 'ไฟล์ที่แก้ไขต่อได้ก่อนส่ง' },
+  { format: 'pptx', label: 'PowerPoint', title: 'สไลด์ หัวข้อละสไลด์ ตารางละสไลด์' },
+];
+
 const SUGGESTIONS = [
   'How does INCOTERMS 2020 differ from the 2010 edition?',
   'What are the steps to create a Sales Order?',
@@ -42,6 +50,7 @@ export default function ChatPage() {
   const [models, setModels] = useState([]);
   const [model, setModel] = useState('');
   const [mode, setMode] = useState('Chat');
+  const [exporting, setExporting] = useState(null);
 
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -149,6 +158,21 @@ export default function ChatPage() {
 
     setPending(merged);
     setError(problems.length ? problems.join(' · ') : null);
+  }
+
+  /** ดาวน์โหลดรายงานของคำตอบนั้น — backend สร้างไฟล์และบันทึก audit ให้ */
+  async function exportReport(messageId, format) {
+    const key = `${messageId}-${format}`;
+    setExporting(key);
+    setError(null);
+
+    try {
+      await download(`/api/chat/messages/${messageId}/export/${format}`, `report.${format}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExporting(null);
+    }
   }
 
   function removePending(index) {
@@ -452,6 +476,25 @@ export default function ChatPage() {
 
                 {message.chatMode === 'Code' && (
                   <span className="badge badge-info">Code</span>
+                )}
+
+                {message.messageRole === 'assistant' && !String(message.messageId).startsWith('pending')
+                  && !message.isBlocked && (
+                  <span className="export-row">
+                    Export:
+                    {EXPORT_FORMATS.map((f) => (
+                      <button
+                        key={f.format}
+                        type="button"
+                        className="btn-link"
+                        disabled={exporting === `${message.messageId}-${f.format}`}
+                        onClick={() => exportReport(message.messageId, f.format)}
+                        title={f.title}
+                      >
+                        {exporting === `${message.messageId}-${f.format}` ? '…' : f.label}
+                      </button>
+                    ))}
+                  </span>
                 )}
 
                 {message.messageRole === 'assistant' && message.modelName && (

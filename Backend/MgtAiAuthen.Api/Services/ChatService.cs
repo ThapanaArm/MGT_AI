@@ -687,11 +687,14 @@ public class ChatService(
             ? "You are an internal company AI assistant. Reply in the same language the user writes in, and be concise and accurate."
             : configured;
 
-        // Charting instructions apply to both modes, so they are appended rather than duplicated
-        // into each mode's prompt.
-        if (!string.IsNullOrWhiteSpace(_options.ChartSystemPrompt))
+        // Charting and report instructions apply to both modes, so they are appended rather
+        // than duplicated into each mode's prompt.
+        foreach (string extra in new[] { _options.ChartSystemPrompt, _options.ReportSystemPrompt })
         {
-            template = string.Join("\n\n", template, _options.ChartSystemPrompt);
+            if (!string.IsNullOrWhiteSpace(extra))
+            {
+                template = string.Join("\n\n", template, extra);
+            }
         }
 
         return template
