@@ -687,6 +687,13 @@ public class ChatService(
             ? "You are an internal company AI assistant. Reply in the same language the user writes in, and be concise and accurate."
             : configured;
 
+        // Charting instructions apply to both modes, so they are appended rather than duplicated
+        // into each mode's prompt.
+        if (!string.IsNullOrWhiteSpace(_options.ChartSystemPrompt))
+        {
+            template = string.Join("\n\n", template, _options.ChartSystemPrompt);
+        }
+
         return template
             .Replace("{FullName}", user.FullName)
             .Replace("{Username}", user.Username)

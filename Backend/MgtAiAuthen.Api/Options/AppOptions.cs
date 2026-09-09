@@ -45,6 +45,15 @@ public class ClaudeOptions
     /// feature degrades to plain chat rather than breaking if it is not configured.
     /// </summary>
     public string CodeSystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>
+    /// How to emit a chart, appended to whichever mode prompt is in use.
+    ///
+    /// Kept as its own setting rather than pasted into both prompts: the schema has to match
+    /// what the frontend parses, and two copies of it would drift the moment one is edited.
+    /// Blank disables charting without touching the other prompts.
+    /// </summary>
+    public string ChartSystemPrompt { get; set; } = string.Empty;
 }
 
 /// <summary>

@@ -1234,3 +1234,174 @@ tbody tr:last-child td {
     width: 200px;
   }
 }
+
+/* ---------------------------------------------------------------- charts in chat
+ *
+ * Marks carry the series colour; every piece of text wears a text token instead —
+ * three of the categorical hues are illegible as text on this surface.
+ * Grid and axes are solid hairlines one step off the surface, deliberately recessive.
+ */
+
+.viz-figure {
+  margin: 10px 0 4px;
+  padding: 12px 14px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 100%;
+}
+
+.viz-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.viz-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.viz-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.viz-crosshair {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.viz-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.viz-tick,
+.viz-cat {
+  font-size: 11px;
+  fill: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-value {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-tip rect {
+  fill: var(--sidebar);
+  opacity: 0.96;
+}
+
+.viz-tip text {
+  font-size: 11px;
+  fill: #fff;
+}
+
+.viz-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.viz-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viz-legend i,
+.viz-table th i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.viz-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
+.viz-note {
+  margin-top: 6px;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.viz-table-wrap {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.viz-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.viz-table th,
+.viz-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.viz-table thead th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.viz-table th i {
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+.viz-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One number is a figure, not a chart — proportional digits, no tabular looseness. */
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0 2px;
+}
+
+.viz-stat-label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.viz-stat-value {
+  font-size: 2.1rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.15;
+}
+
+/* A bubble holding a chart needs the room a chart needs. */
+.msg-bubble:has(.viz-figure) {
+  max-width: none;
+  width: 100%;
+}

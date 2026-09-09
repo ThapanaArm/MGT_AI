@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import hljs from 'highlight.js/lib/common';
+import ChartBlock from './ChartBlock';
 
 /**
  * Renders an assistant message, turning fenced code blocks into real code blocks
@@ -101,7 +102,12 @@ export default function MessageContent({ text }) {
     <>
       {segments.map((segment, index) =>
         segment.type === 'code' ? (
-          <CodeBlock key={index} language={segment.language} value={segment.value} />
+          // A ```chart block carries data, not code — it is drawn rather than syntax-highlighted.
+          segment.language === 'chart' ? (
+            <ChartBlock key={index} raw={segment.value} />
+          ) : (
+            <CodeBlock key={index} language={segment.language} value={segment.value} />
+          )
         ) : (
           <span key={index} className="msg-text">
             {segment.value.replace(/^\n+|\n+$/g, '')}
