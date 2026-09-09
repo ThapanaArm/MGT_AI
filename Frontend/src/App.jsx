@@ -10,6 +10,8 @@ import CostReportPage from './pages/CostReportPage';
 import PolicyRulesPage from './pages/PolicyRulesPage';
 import ModelPricingPage from './pages/ModelPricingPage';
 import UsersPage from './pages/UsersPage';
+import DataSourcesPage from './pages/DataSourcesPage';
+import DataSourceGrantsPage from './pages/DataSourceGrantsPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 
 export default function App() {
@@ -79,6 +81,22 @@ export default function App() {
           element={
             <ProtectedRoute roles={['Admin']}>
               <UsersPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/data-sources"
+          element={
+            <ProtectedRoute roles={['Admin']}>
+              <DataSourcesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/data-source-access"
+          element={
+            <ProtectedRoute roles={['Admin']}>
+              <DataSourceGrantsPage />
             </ProtectedRoute>
           }
         />

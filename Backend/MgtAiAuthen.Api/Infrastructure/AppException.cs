@@ -44,6 +44,24 @@ public class AiProviderAttribute : System.ComponentModel.DataAnnotations.Validat
         => $"Provider must be one of: {string.Join(", ", Data.AiProviders.All)}";
 }
 
+/// <summary>ตรวจว่าเป็นชื่อชนิดแหล่งข้อมูลที่ทะเบียนรู้จัก — อ่านจาก Data.DataSourceTypes.All ตรง ๆ</summary>
+public class DataSourceTypeAttribute : System.ComponentModel.DataAnnotations.ValidationAttribute
+{
+    public override bool IsValid(object? value) => value is string text && Data.DataSourceTypes.IsKnown(text);
+
+    public override string FormatErrorMessage(string name)
+        => $"Source type must be one of: {string.Join(", ", Data.DataSourceTypes.All)}";
+}
+
+/// <summary>ตรวจว่าเป็นขอบเขตสิทธิ์ที่รู้จัก — อ่านจาก Data.DataSourceScopeTypes.All ตรง ๆ</summary>
+public class DataSourceScopeTypeAttribute : System.ComponentModel.DataAnnotations.ValidationAttribute
+{
+    public override bool IsValid(object? value) => value is string text && Data.DataSourceScopeTypes.IsKnown(text);
+
+    public override string FormatErrorMessage(string name)
+        => $"Scope type must be one of: {string.Join(", ", Data.DataSourceScopeTypes.All)}";
+}
+
 /// <summary>แปลง exception ทุกชนิดให้เป็น <see cref="ApiError"/> รูปแบบเดียว</summary>
 public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
 {

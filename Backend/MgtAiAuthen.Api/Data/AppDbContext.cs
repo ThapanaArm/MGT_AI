@@ -15,6 +15,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ModelPricing> ModelPricing => Set<ModelPricing>();
+    public DbSet<DataSource> DataSources => Set<DataSource>();
+    public DbSet<DataSourceGrant> DataSourceGrants => Set<DataSourceGrant>();
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -173,6 +175,46 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.Property(x => x.UpdatedBy).HasColumnName("UpdatedBy").HasMaxLength(100);
             e.HasIndex(x => x.ModelName).IsUnique();
+        });
+
+        b.Entity<DataSource>(e =>
+        {
+            e.ToTable("DataSources");
+            e.HasKey(x => x.SourceId);
+            e.Property(x => x.SourceId).HasColumnName("SourceId");
+            e.Property(x => x.SourceName).HasColumnName("SourceName").HasMaxLength(150).IsRequired();
+            e.Property(x => x.SourceType).HasColumnName("SourceType").HasMaxLength(20).IsRequired();
+            e.Property(x => x.Description).HasColumnName("Description").HasMaxLength(500);
+            e.Property(x => x.ConfigJson).HasColumnName("ConfigJson");
+            e.Property(x => x.EncryptedSecret).HasColumnName("EncryptedSecret");
+            e.Property(x => x.IsActive).HasColumnName("IsActive");
+            e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
+            e.Property(x => x.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(100);
+            e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
+            e.Property(x => x.UpdatedBy).HasColumnName("UpdatedBy").HasMaxLength(100);
+            e.HasIndex(x => x.SourceName).IsUnique();
+        });
+
+        b.Entity<DataSourceGrant>(e =>
+        {
+            e.ToTable("DataSourceGrants");
+            e.HasKey(x => x.GrantId);
+            e.Property(x => x.GrantId).HasColumnName("GrantId");
+            e.Property(x => x.SourceId).HasColumnName("SourceId");
+            e.Property(x => x.UserId).HasColumnName("UserId");
+            e.Property(x => x.ScopeType).HasColumnName("ScopeType").HasMaxLength(20).IsRequired();
+            e.Property(x => x.ScopeFilter).HasColumnName("ScopeFilter").HasMaxLength(1000);
+            e.Property(x => x.Notes).HasColumnName("Notes").HasMaxLength(500);
+            e.Property(x => x.GrantedAt).HasColumnName("GrantedAt");
+            e.Property(x => x.GrantedBy).HasColumnName("GrantedBy").HasMaxLength(100);
+            e.Property(x => x.IsActive).HasColumnName("IsActive");
+            e.Property(x => x.RevokedAt).HasColumnName("RevokedAt");
+            e.Property(x => x.RevokedBy).HasColumnName("RevokedBy").HasMaxLength(100);
+
+            // ไม่ผูก navigation ไปยัง AppUser/DataSource โดยเจตนา — ตามแบบ ChatMessages ที่ไม่ผูก
+            // navigation กับ Users เพื่อไม่ให้ EF พยายาม cascade delete ข้ามตารางสิทธิ์
+            e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<DataSource>().WithMany().HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<AuditLog>(e =>

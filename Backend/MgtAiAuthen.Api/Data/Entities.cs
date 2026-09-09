@@ -63,6 +63,12 @@ public static class AuditActions
     public const string PolicyCreated = "POLICY_CREATED";
     public const string PolicyUpdated = "POLICY_UPDATED";
     public const string PolicyDeleted = "POLICY_DELETED";
+
+    public const string DataSourceCreated = "DATASOURCE_CREATED";
+    public const string DataSourceUpdated = "DATASOURCE_UPDATED";
+    public const string DataSourceTested = "DATASOURCE_TESTED";
+    public const string DataSourceGranted = "DATASOURCE_GRANTED";
+    public const string DataSourceRevoked = "DATASOURCE_REVOKED";
 }
 
 /// <summary>ผลของการคัดกรองข้อความตาม PolicyRules</summary>
@@ -360,6 +366,87 @@ public static class AiProviders
     public static bool IsKnown(string? provider)
         => !string.IsNullOrWhiteSpace(provider)
            && All.Contains(provider.Trim(), StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// ชนิดแหล่งข้อมูลภายนอกที่ทะเบียนรู้จัก — ผูกกับ CHECK constraint ของ DataSources.SourceType
+/// เพิ่มชนิดใหม่ต้องแก้ทั้งสองที่ (บทเรียนจาก AiProviders: enum-like ต้องไล่ทุกสำเนาของรายการเดิม)
+/// </summary>
+public static class DataSourceTypes
+{
+    public const string Api = "Api";
+    public const string DataLake = "DataLake";
+    public const string LocalFolder = "LocalFolder";
+    public const string SharePoint = "SharePoint";
+
+    public static readonly string[] All = [Api, DataLake, LocalFolder, SharePoint];
+
+    public static bool IsKnown(string? type)
+        => !string.IsNullOrWhiteSpace(type) && All.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>ขอบเขตสิทธิ์ของ DataSourceGrant — ผูกกับ CHECK constraint ของ ScopeType</summary>
+public static class DataSourceScopeTypes
+{
+    /// <summary>อ่านได้ทั้งหมดที่แหล่งข้อมูลนั้นมี</summary>
+    public const string Full = "Full";
+
+    /// <summary>จำกัดตาม Users.Department ของพนักงานคนนั้นเองโดยอัตโนมัติ</summary>
+    public const string OwnDepartment = "OwnDepartment";
+
+    /// <summary>แอดมินกำหนดเงื่อนไขเอง (endpoint/field ที่อ่านได้ ฯลฯ)</summary>
+    public const string Custom = "Custom";
+
+    public static readonly string[] All = [Full, OwnDepartment, Custom];
+
+    public static bool IsKnown(string? type)
+        => !string.IsNullOrWhiteSpace(type) && All.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// dbo.DataSources — ทะเบียนแหล่งข้อมูลภายนอกที่แอดมิน/IT ตั้งค่าไว้
+///
+/// Phase 1: เก็บทะเบียน + สิทธิ์เท่านั้น ยังไม่มีจุดใดในแชทดึงข้อมูลจากที่นี่จริง
+/// </summary>
+public class DataSource
+{
+    public int SourceId { get; set; }
+    public string SourceName { get; set; } = string.Empty;
+    public string SourceType { get; set; } = DataSourceTypes.Api;
+    public string? Description { get; set; }
+
+    /// <summary>ค่าที่ไม่ใช่ความลับ (URL, path, tenant id) เก็บเป็น JSON ดิบ รูปแบบต่างกันตาม SourceType</summary>
+    public string? ConfigJson { get; set; }
+
+    /// <summary>เข้ารหัสด้วย Data Protection ก่อนเก็บเสมอ — ไม่เคยเป็น plain text ในคอลัมน์นี้</summary>
+    public string? EncryptedSecret { get; set; }
+
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public string? CreatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+}
+
+/// <summary>dbo.DataSourceGrants — สิทธิ์การเข้าถึง DataSource ของพนักงานแต่ละคน</summary>
+public class DataSourceGrant
+{
+    public long GrantId { get; set; }
+    public int SourceId { get; set; }
+    public int UserId { get; set; }
+
+    public string ScopeType { get; set; } = DataSourceScopeTypes.Full;
+
+    /// <summary>ใช้เมื่อ ScopeType = Custom เท่านั้น — ข้อความอิสระที่แอดมินพิมพ์เอง</summary>
+    public string? ScopeFilter { get; set; }
+    public string? Notes { get; set; }
+
+    public DateTime GrantedAt { get; set; } = DateTime.Now;
+    public string? GrantedBy { get; set; }
+
+    public bool IsActive { get; set; } = true;
+    public DateTime? RevokedAt { get; set; }
+    public string? RevokedBy { get; set; }
 }
 
 /// <summary>dbo.AuditLogs</summary>

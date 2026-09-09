@@ -55,6 +55,12 @@ export default function Layout() {
             <NavLink to="/admin/users" className="nav-link">
               User management
             </NavLink>
+            <NavLink to="/admin/data-sources" className="nav-link">
+              Data source registry
+            </NavLink>
+            <NavLink to="/admin/data-source-access" className="nav-link">
+              Data source access
+            </NavLink>
           </>
         )}
 

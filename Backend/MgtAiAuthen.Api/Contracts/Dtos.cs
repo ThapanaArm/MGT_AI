@@ -517,3 +517,88 @@ public record ResetPasswordRequest
 
     public bool MustChangePassword { get; init; } = true;
 }
+
+// ---------------------------------------------------------------- ทะเบียนแหล่งข้อมูล (Phase 1: ทะเบียน+สิทธิ์ ยังไม่ต่อกับแชท)
+
+/// <summary>
+/// หนึ่งแหล่งข้อมูล — ไม่คืนความลับ (secret) กลับไปเลย มีแค่ <see cref="HasSecret"/> บอกว่าตั้งไว้แล้วหรือยัง
+/// </summary>
+public record DataSourceDto(
+    int SourceId,
+    string SourceName,
+    string SourceType,
+    string? Description,
+    /// <summary>ค่าที่ไม่ใช่ความลับ เช่น baseUrl, path, tenantId — รูปแบบคีย์ต่างกันตาม SourceType</summary>
+    Dictionary<string, string> Config,
+    bool HasSecret,
+    bool IsActive,
+    int ActiveGrantCount,
+    DateTime CreatedAt,
+    string? CreatedBy,
+    DateTime? UpdatedAt,
+    string? UpdatedBy);
+
+public record DataSourceUpsertRequest
+{
+    [Required(ErrorMessage = "Source name is required")]
+    [StringLength(150)]
+    public string SourceName { get; init; } = string.Empty;
+
+    [Required(ErrorMessage = "Source type is required")]
+    [MgtAiAuthen.Api.Infrastructure.DataSourceType]
+    public string SourceType { get; init; } = string.Empty;
+
+    [StringLength(500)]
+    public string? Description { get; init; }
+
+    /// <summary>ค่าที่ไม่ใช่ความลับ — คีย์ที่ต้องมีต่างกันตาม SourceType (ดู DataSourceConfig.RequiredKeys)</summary>
+    public Dictionary<string, string> Config { get; init; } = new();
+
+    /// <summary>
+    /// API key / client secret / app secret เป็น plain text ตอนส่งเข้ามาเท่านั้น — เข้ารหัสก่อน
+    /// เก็บเสมอ ไม่ส่งมา (null) ตอนแก้ไข = คงค่าความลับเดิมไว้ ส่งสตริงว่าง = ล้างความลับทิ้ง
+    /// </summary>
+    public string? Secret { get; init; }
+
+    public bool IsActive { get; init; } = true;
+}
+
+public record DataSourceTestResult(bool Success, string Message, DateTime TestedAt);
+
+/// <summary>สิทธิ์การเข้าถึงหนึ่งแหล่งข้อมูลของพนักงานหนึ่งคน</summary>
+public record DataSourceGrantDto(
+    long GrantId,
+    int SourceId,
+    string SourceName,
+    string SourceType,
+    int UserId,
+    string Username,
+    string FullName,
+    string? Department,
+    string ScopeType,
+    string? ScopeFilter,
+    string? Notes,
+    DateTime GrantedAt,
+    string? GrantedBy,
+    bool IsActive,
+    DateTime? RevokedAt,
+    string? RevokedBy);
+
+public record DataSourceGrantRequest
+{
+    [Required]
+    public int SourceId { get; init; }
+
+    [Required]
+    public int UserId { get; init; }
+
+    [Required(ErrorMessage = "Scope type is required")]
+    [MgtAiAuthen.Api.Infrastructure.DataSourceScopeType]
+    public string ScopeType { get; init; } = "Full";
+
+    [StringLength(1000)]
+    public string? ScopeFilter { get; init; }
+
+    [StringLength(500)]
+    public string? Notes { get; init; }
+}

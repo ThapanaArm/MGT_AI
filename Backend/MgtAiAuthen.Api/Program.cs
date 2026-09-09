@@ -6,6 +6,8 @@ using MgtAiAuthen.Api.Options;
 using MgtAiAuthen.Api.Security;
 using MgtAiAuthen.Api.Services;
 using MgtAiAuthen.Api.Services.Reporting;
+using MgtAiAuthen.Api.Services.DataSources;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -163,6 +165,29 @@ builder.Services.AddSingleton<IReportWriter, PdfReportWriter>();
 builder.Services.AddSingleton<IReportWriter, WordReportWriter>();
 builder.Services.AddSingleton<IReportWriter, PowerPointReportWriter>();
 builder.Services.AddScoped<IReportService, ReportService>();
+
+// Data source registry (Phase 1 — registry + permissions only, see README 6.22). Secrets are
+// encrypted with the Data Protection key ring; on more than one machine that ring must be shared
+// (a network path or a key vault) or a second instance cannot decrypt what the first one wrote.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        Path.Combine(builder.Environment.ContentRootPath, "App_Data", "keys")))
+    .SetApplicationName("MgtAiAuthen");
+
+builder.Services.AddSingleton<IDataSourceConnectionTester, LocalFolderConnectionTester>();
+builder.Services.AddSingleton<IDataSourceConnectionTester, ApiConnectionTester>();
+builder.Services.AddSingleton<IDataSourceConnectionTester, SharePointConnectionTester>();
+builder.Services.AddSingleton<IDataSourceConnectionTester, DataLakeConnectionTester>();
+builder.Services.AddScoped<IDataSourceService, DataSourceService>();
+
+builder.Services.AddHttpClient(ApiConnectionTester.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient(SharePointConnectionTester.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IChatLogService, ChatLogService>();

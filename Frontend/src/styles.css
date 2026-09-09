@@ -1417,3 +1417,24 @@ tbody tr:last-child td {
 .export-row .btn-link {
   font-size: 0.76rem;
 }
+
+/* ---------------------------------------------- Data source registry / access */
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.btn-link-danger {
+  color: var(--danger);
+}
+
+.btn-link-danger:hover {
+  color: var(--danger);
+  text-decoration: underline;
+}
+
+.btn-link:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+  text-decoration: none;
+}
