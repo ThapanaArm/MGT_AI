@@ -1,0 +1,18 @@
+# ทุกไฟล์ข้อความเก็บใน repo เป็น LF และให้ git แปลงตามระบบตอน checkout
+# (โปรเจกต์นี้มีคอมเมนต์และข้อมูลภาษาไทย จึงต้องคุมให้แน่นอน ไม่ปล่อยให้แต่ละเครื่องต่างกัน)
+* text=auto eol=lf
+
+# สคริปต์ที่ต้องรันบน Windows ต้องเป็น CRLF
+*.ps1   text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+*.slnx  text eol=crlf
+
+# ไฟล์ไบนารี ห้ามแปลงอะไรทั้งสิ้น
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.pdf   binary
+*.ico   binary

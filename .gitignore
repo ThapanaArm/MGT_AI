@@ -1,0 +1,35 @@
+# ---- ความลับ: ห้าม commit ----
+# ไฟล์นี้มี connection string (พร้อมรหัสผ่าน sa), JWT signing key และ Claude API key
+appsettings.Development.json
+appsettings.Production.json
+.env
+.env.development
+.env.production
+.env.local
+
+# ---- ไฟล์ที่พนักงานอัพโหลด: ห้าม commit ----
+# อาจมีเอกสารภายในหรือข้อมูลส่วนบุคคล — ต้องสำรองแยกพร้อมฐานข้อมูล ไม่ใช่เก็บใน git
+App_Data/
+Backend/MgtAiAuthen.Api/App_Data/
+
+# ---- .NET ----
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ---- Node / Vite ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-error.log*
+
+# ---- IDE / OS ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+Thumbs.db
+Desktop.ini
