@@ -78,6 +78,8 @@ public class ChatLogService(AppDbContext db) : IChatLogService
                     .ToList(),
                 m.Session!.ProjectId,
                 m.Session!.Project == null ? null : m.Session!.Project.Name,
+                m.Session!.DataSourceId,
+                m.Session!.DataSource == null ? null : m.Session!.DataSource.SourceName,
                 m.CreatedAt))
             .ToListAsync(ct);
 
@@ -197,6 +199,7 @@ public class ChatLogService(AppDbContext db) : IChatLogService
                 m.AttachmentCount,
                 AttachmentNames = string.Join(" | ", m.Attachments.Select(a => a.FileName)),
                 ProjectName = m.Session!.Project == null ? null : m.Session!.Project.Name,
+                DataSourceName = m.Session!.DataSource == null ? null : m.Session!.DataSource.SourceName,
                 m.Content,
             })
             .ToListAsync(ct);
@@ -209,7 +212,7 @@ public class ChatLogService(AppDbContext db) : IChatLogService
             "Tokens in", "Tokens out", "Cache write tokens", "Cache read tokens", "Total tokens",
             "Input cost (USD)", "Output cost (USD)", "Cache cost (USD)",
             "Total cost (USD)", "Total cost (THB)", "USD/THB rate",
-            "Latency (ms)", "IP", "SessionID", "Attachment count", "Attachment names", "Project", "Content",
+            "Latency (ms)", "IP", "SessionID", "Attachment count", "Attachment names", "Project", "Data source", "Content",
         }.Select(Escape)));
 
         foreach (var r in rows)
@@ -245,6 +248,7 @@ public class ChatLogService(AppDbContext db) : IChatLogService
                 r.AttachmentCount.ToString(CultureInfo.InvariantCulture),
                 r.AttachmentNames,
                 r.ProjectName ?? string.Empty,
+                r.DataSourceName ?? string.Empty,
                 r.Content,
             }.Select(Escape)));
         }

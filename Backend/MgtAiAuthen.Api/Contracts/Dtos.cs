@@ -88,6 +88,12 @@ public record ChatSendRequest
     /// session's project is fixed at creation (see Project.cs for why).
     /// </summary>
     public int? ProjectId { get; init; }
+
+    /// <summary>
+    /// Ties a brand-new conversation to a Data Source the caller has an active grant for —
+    /// ignored when SessionId is set, same immutable-at-creation rule as ProjectId.
+    /// </summary>
+    public int? DataSourceId { get; init; }
 }
 
 /// <summary>One model the user may pick, with enough pricing context to choose sensibly.</summary>
@@ -161,6 +167,8 @@ public record ChatSessionDto(
     int MessageCount,
     int? ProjectId,
     string? ProjectName,
+    int? DataSourceId,
+    string? DataSourceName,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
@@ -250,6 +258,8 @@ public record ChatLogItemDto(
     IReadOnlyList<ChatAttachmentDto> Attachments,
     int? ProjectId,
     string? ProjectName,
+    int? DataSourceId,
+    string? DataSourceName,
     DateTime CreatedAt);
 
 public record NamedCount(string Key, string Label, int Count);
@@ -612,6 +622,33 @@ public record DataSourceGrantRequest
     [StringLength(500)]
     public string? Notes { get; init; }
 }
+
+// ---------------------------------------------------------------- ดึงข้อมูลจากแหล่งข้อมูลเข้าแชท (Phase 2)
+
+/// <summary>
+/// One data source the caller may attach to a brand-new conversation — only sources they hold an
+/// active grant for, never the full registry (that stays admin-only via AdminDataSourcesController).
+/// </summary>
+public record AvailableDataSourceDto(
+    int SourceId,
+    string SourceName,
+    string SourceType,
+    string? Description,
+    string ScopeType,
+    string? ScopeFilter);
+
+/// <summary>
+/// The cached result of pulling data for one conversation's Data Source — null fields mean nothing
+/// has been fetched yet (e.g. the session predates this feature, or has no Data Source at all).
+/// </summary>
+public record DataSourceFetchStatusDto(
+    int? SourceId,
+    string? SourceName,
+    bool? Success,
+    string? Message,
+    DateTime? FetchedAt,
+    int? CharCount,
+    bool? Truncated);
 
 // ---------------------------------------------------------------- Projects (self-service)
 

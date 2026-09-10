@@ -69,6 +69,8 @@ public static class AuditActions
     public const string DataSourceTested = "DATASOURCE_TESTED";
     public const string DataSourceGranted = "DATASOURCE_GRANTED";
     public const string DataSourceRevoked = "DATASOURCE_REVOKED";
+    public const string DataSourceFetched = "DATASOURCE_FETCHED";
+    public const string DataSourceFetchFailed = "DATASOURCE_FETCH_FAILED";
 
     public const string ProjectCreated = "PROJECT_CREATED";
     public const string ProjectUpdated = "PROJECT_UPDATED";
@@ -203,12 +205,42 @@ public class ChatSession
     /// <summary>Set only when the session is created; never changed afterwards — see Project.</summary>
     public int? ProjectId { get; set; }
 
+    /// <summary>Set only when the session is created; never changed afterwards — see DataSource.</summary>
+    public int? DataSourceId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime UpdatedAt { get; set; } = DateTime.Now;
 
     public AppUser? User { get; set; }
     public Project? Project { get; set; }
+    public DataSource? DataSource { get; set; }
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+}
+
+/// <summary>
+/// dbo.ChatSessionDataFetches — one row per conversation, the cached result of pulling data from
+/// that session's DataSource. Fetched once when the conversation starts; "Refresh" overwrites this
+/// same row rather than keeping a history (the audit log already records every fetch/refresh via
+/// AuditActions.DataSourceFetched/DataSourceFetchFailed).
+/// </summary>
+public class ChatSessionDataFetch
+{
+    public Guid SessionId { get; set; }
+    public int SourceId { get; set; }
+
+    public DateTime FetchedAt { get; set; } = DateTime.Now;
+    public int FetchedByUserId { get; set; }
+
+    public bool Success { get; set; }
+    public string Message { get; set; } = string.Empty;
+
+    /// <summary>Null when Success is false — nothing to send to the AI.</summary>
+    public string? ContentText { get; set; }
+    public int CharCount { get; set; }
+    public bool Truncated { get; set; }
+
+    public ChatSession? Session { get; set; }
+    public DataSource? Source { get; set; }
 }
 
 /// <summary>
@@ -476,7 +508,8 @@ public static class DataSourceScopeTypes
 /// <summary>
 /// dbo.DataSources — ทะเบียนแหล่งข้อมูลภายนอกที่แอดมิน/IT ตั้งค่าไว้
 ///
-/// Phase 1: เก็บทะเบียน + สิทธิ์เท่านั้น ยังไม่มีจุดใดในแชทดึงข้อมูลจากที่นี่จริง
+/// Phase 2: ผูกกับแชทได้แล้ว — ผู้ใช้ที่มี DataSourceGrant ที่ยัง active เลือกแหล่งข้อมูลนี้
+/// ตอนเริ่มบทสนทนาใหม่ได้ (ดู ChatSession.DataSourceId และ ChatSessionDataFetch)
 /// </summary>
 public class DataSource
 {

@@ -29,11 +29,27 @@ public interface IDataSourceService
         DataSourceGrantRequest request, string? grantedBy, CancellationToken ct = default);
 
     Task RevokeAsync(long grantId, string? revokedBy, CancellationToken ct = default);
+
+    // ---- chat integration (Phase 2) ----
+
+    /// <summary>Sources the given user may attach to a brand-new conversation — active grant + active source only.</summary>
+    Task<IReadOnlyList<AvailableDataSourceDto>> GetAvailableForUserAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Pulls data for one conversation's Data Source and caches the result on
+    /// <see cref="ChatSessionDataFetch"/> (first call inserts, later calls — "Refresh" — overwrite it).
+    /// Throws <see cref="AppException"/> if the user has no active grant for the session's source.
+    /// </summary>
+    Task<DataSourceFetchStatusDto> FetchForSessionAsync(
+        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default);
+
+    Task<DataSourceFetchStatusDto> GetFetchStatusAsync(Guid sessionId, CancellationToken ct = default);
 }
 
 public class DataSourceService(
     AppDbContext db,
     IEnumerable<IDataSourceConnectionTester> testers,
+    IEnumerable<IDataSourceFetcher> fetchers,
     IDataProtectionProvider dataProtection,
     IAuditService audit,
     ILogger<DataSourceService> logger) : IDataSourceService
@@ -50,6 +66,9 @@ public class DataSourceService(
 
     private readonly Dictionary<string, IDataSourceConnectionTester> _testers =
         testers.ToDictionary(t => t.SourceType, StringComparer.OrdinalIgnoreCase);
+
+    private readonly Dictionary<string, IDataSourceFetcher> _fetchers =
+        fetchers.ToDictionary(f => f.SourceType, StringComparer.OrdinalIgnoreCase);
 
     public async Task<IReadOnlyList<DataSourceDto>> GetAllAsync(CancellationToken ct = default)
     {
@@ -165,6 +184,14 @@ public class DataSourceService(
             throw new AppException(
                 "This data source has grant history (current or past) and cannot be deleted. " +
                 "Revoke all grants first, or set it to inactive instead of deleting it.");
+        }
+
+        bool hasAnySession = await db.ChatSessions.AnyAsync(s => s.DataSourceId == sourceId, ct);
+        if (hasAnySession)
+        {
+            throw new AppException(
+                "One or more conversations were started under this data source and cannot be " +
+                "orphaned. Set it to inactive instead of deleting it.");
         }
 
         db.DataSources.Remove(entity);
@@ -314,6 +341,106 @@ public class DataSourceService(
         await audit.LogAsync(AuditCategories.Admin, AuditActions.DataSourceRevoked, null, revokedBy,
             $"Revoked grant #{grantId} (source #{grant.SourceId}, user #{grant.UserId})",
             isSuccess: true, ct);
+    }
+
+    // ---------------------------------------------------------------- chat integration (Phase 2)
+
+    public async Task<IReadOnlyList<AvailableDataSourceDto>> GetAvailableForUserAsync(
+        int userId, CancellationToken ct = default)
+    {
+        var rows = await db.DataSourceGrants.AsNoTracking()
+            .Where(g => g.UserId == userId && g.IsActive)
+            .Join(db.DataSources.AsNoTracking().Where(s => s.IsActive), g => g.SourceId, s => s.SourceId,
+                (g, s) => new { g.ScopeType, g.ScopeFilter, s.SourceId, s.SourceName, s.SourceType, s.Description })
+            .OrderBy(x => x.SourceName)
+            .ToListAsync(ct);
+
+        return rows.Select(r => new AvailableDataSourceDto(
+            r.SourceId, r.SourceName, r.SourceType, r.Description, r.ScopeType, r.ScopeFilter)).ToList();
+    }
+
+    public async Task<DataSourceFetchStatusDto> FetchForSessionAsync(
+        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default)
+    {
+        DataSourceGrant grant = await db.DataSourceGrants.AsNoTracking()
+            .FirstOrDefaultAsync(g => g.SourceId == sourceId && g.UserId == userId && g.IsActive, ct)
+            ?? throw AppException.Forbidden("You do not have access to this data source.");
+
+        DataSource source = await db.DataSources.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SourceId == sourceId, ct)
+            ?? throw AppException.NotFound("Data source not found");
+
+        if (!source.IsActive)
+        {
+            throw new AppException("This data source has been deactivated by an administrator.");
+        }
+
+        if (!_fetchers.TryGetValue(source.SourceType, out IDataSourceFetcher? fetcher))
+        {
+            throw new AppException($"No fetcher is registered for source type \"{source.SourceType}\".");
+        }
+
+        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
+        string? secret = Unprotect(source.EncryptedSecret);
+
+        DataSourceFetchResult result = await fetcher.FetchAsync(config, secret, grant.ScopeFilter, ct);
+
+        ChatSessionDataFetch? existing = await db.ChatSessionDataFetches
+            .FirstOrDefaultAsync(f => f.SessionId == sessionId, ct);
+
+        DateTime fetchedAt = DateTime.Now;
+
+        if (existing is null)
+        {
+            db.ChatSessionDataFetches.Add(new ChatSessionDataFetch
+            {
+                SessionId = sessionId,
+                SourceId = sourceId,
+                FetchedAt = fetchedAt,
+                FetchedByUserId = userId,
+                Success = result.Success,
+                Message = result.Message,
+                ContentText = result.ContentText,
+                CharCount = result.CharCount,
+                Truncated = result.Truncated,
+            });
+        }
+        else
+        {
+            existing.SourceId = sourceId;
+            existing.FetchedAt = fetchedAt;
+            existing.FetchedByUserId = userId;
+            existing.Success = result.Success;
+            existing.Message = result.Message;
+            existing.ContentText = result.ContentText;
+            existing.CharCount = result.CharCount;
+            existing.Truncated = result.Truncated;
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        await audit.LogAsync(AuditCategories.Chat,
+            result.Success ? AuditActions.DataSourceFetched : AuditActions.DataSourceFetchFailed,
+            userId, username,
+            $"{(existing is null ? "Fetched" : "Refreshed")} data from \"{source.SourceName}\" for session " +
+            $"{sessionId}: {result.Message}", isSuccess: result.Success, ct);
+
+        return new DataSourceFetchStatusDto(
+            sourceId, source.SourceName, result.Success, result.Message, fetchedAt, result.CharCount, result.Truncated);
+    }
+
+    public async Task<DataSourceFetchStatusDto> GetFetchStatusAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var row = await db.ChatSessionDataFetches.AsNoTracking()
+            .Where(f => f.SessionId == sessionId)
+            .Join(db.DataSources.AsNoTracking(), f => f.SourceId, s => s.SourceId,
+                (f, s) => new { f.SourceId, s.SourceName, f.Success, f.Message, f.FetchedAt, f.CharCount, f.Truncated })
+            .FirstOrDefaultAsync(ct);
+
+        return row is null
+            ? new DataSourceFetchStatusDto(null, null, null, null, null, null, null)
+            : new DataSourceFetchStatusDto(
+                row.SourceId, row.SourceName, row.Success, row.Message, row.FetchedAt, row.CharCount, row.Truncated);
     }
 
     // ---------------------------------------------------------------- helpers

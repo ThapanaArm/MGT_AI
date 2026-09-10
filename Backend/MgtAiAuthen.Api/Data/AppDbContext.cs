@@ -21,6 +21,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ProjectFile> ProjectFiles => Set<ProjectFile>();
     public DbSet<Skill> Skills => Set<Skill>();
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
+    public DbSet<ChatSessionDataFetch> ChatSessionDataFetches => Set<ChatSessionDataFetch>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -91,8 +92,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.Property(x => x.ProjectId).HasColumnName("ProjectId");
+            e.Property(x => x.DataSourceId).HasColumnName("DataSourceId");
             e.HasOne(x => x.User).WithMany(u => u.Sessions).HasForeignKey(x => x.UserId);
             e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.DataSource).WithMany().HasForeignKey(x => x.DataSourceId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<Project>(e =>
@@ -144,6 +147,24 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.OwnerUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<ChatSessionDataFetch>(e =>
+        {
+            e.ToTable("ChatSessionDataFetches");
+            e.HasKey(x => x.SessionId);
+            e.Property(x => x.SessionId).HasColumnName("SessionId").ValueGeneratedNever();
+            e.Property(x => x.SourceId).HasColumnName("SourceId");
+            e.Property(x => x.FetchedAt).HasColumnName("FetchedAt");
+            e.Property(x => x.FetchedByUserId).HasColumnName("FetchedByUserId");
+            e.Property(x => x.Success).HasColumnName("Success");
+            e.Property(x => x.Message).HasColumnName("Message").HasMaxLength(1000).IsRequired();
+            e.Property(x => x.ContentText).HasColumnName("ContentText");
+            e.Property(x => x.CharCount).HasColumnName("CharCount");
+            e.Property(x => x.Truncated).HasColumnName("Truncated");
+            e.HasOne(x => x.Session).WithOne().HasForeignKey<ChatSessionDataFetch>(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Source).WithMany().HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.FetchedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<ChatMessage>(e =>

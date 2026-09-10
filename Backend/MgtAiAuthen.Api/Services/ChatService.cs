@@ -1,8 +1,10 @@
+using System.Text;
 using MgtAiAuthen.Api.Contracts;
 using MgtAiAuthen.Api.Data;
 using MgtAiAuthen.Api.Infrastructure;
 using MgtAiAuthen.Api.Options;
 using MgtAiAuthen.Api.Security;
+using MgtAiAuthen.Api.Services.DataSources;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -24,6 +26,14 @@ public interface IChatService
 
     Task DeleteSessionAsync(Guid sessionId, int userId, CancellationToken ct = default);
 
+    /// <summary>Owner sees it always; Admin/Auditor see any session's status for oversight.</summary>
+    Task<DataSourceFetchStatusDto> GetDataSourceStatusAsync(
+        Guid sessionId, int userId, bool canReadAllLogs, CancellationToken ct = default);
+
+    /// <summary>Owner only — re-pulls the conversation's Data Source and overwrites the cached fetch.</summary>
+    Task<DataSourceFetchStatusDto> RefreshDataSourceAsync(
+        Guid sessionId, int userId, string username, CancellationToken ct = default);
+
     /// <summary>Reads an attachment for download — owner or Admin/Auditor only.</summary>
     Task<(ChatAttachment Meta, byte[] Content)> GetAttachmentAsync(
         long attachmentId, int userId, bool canReadAllLogs, CancellationToken ct = default);
@@ -38,6 +48,7 @@ public class ChatService(
     IPolicyService policy,
     ICostCalculator costCalculator,
     IAttachmentService attachments,
+    IDataSourceService dataSources,
     IAuditService audit,
     IHttpContextAccessor httpContextAccessor,
     IOptions<ClaudeOptions> claudeOptions,
@@ -55,6 +66,7 @@ public class ChatService(
             .Select(s => new ChatSessionDto(
                 s.SessionId, s.Title, s.MessageCount,
                 s.ProjectId, s.Project == null ? null : s.Project.Name,
+                s.DataSourceId, s.DataSource == null ? null : s.DataSource.SourceName,
                 s.CreatedAt, s.UpdatedAt))
             .ToListAsync(ct);
 
@@ -108,7 +120,8 @@ public class ChatService(
         AppUser user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId, ct)
             ?? throw AppException.NotFound("User not found");
 
-        ChatSession session = await ResolveSessionAsync(userId, request.SessionId, request.ProjectId, ct);
+        ChatSession session = await ResolveSessionAsync(
+            userId, request.SessionId, request.ProjectId, request.DataSourceId, user.Username, ct);
 
         List<StoredFile> storedFiles = [];
         if (incoming.Count > 0)
@@ -224,7 +237,7 @@ public class ChatService(
                 isSuccess: true, ct);
         }
 
-        List<ChatTurn> turns = await BuildHistoryAsync(session.SessionId, session.ProjectId, ct);
+        List<ChatTurn> turns = await BuildHistoryAsync(session.SessionId, session.ProjectId, session.DataSourceId, ct);
 
         AiReply reply;
         try
@@ -348,8 +361,43 @@ public class ChatService(
             $"Hid conversation {sessionId} (messages remain in the log)", isSuccess: true, ct);
     }
 
+    public async Task<DataSourceFetchStatusDto> GetDataSourceStatusAsync(
+        Guid sessionId, int userId, bool canReadAllLogs, CancellationToken ct = default)
+    {
+        ChatSession session = await db.ChatSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SessionId == sessionId, ct)
+            ?? throw AppException.NotFound("Conversation not found");
+
+        if (session.UserId != userId && !canReadAllLogs)
+        {
+            throw AppException.Forbidden("You do not have permission to view this conversation");
+        }
+
+        return await dataSources.GetFetchStatusAsync(sessionId, ct);
+    }
+
+    public async Task<DataSourceFetchStatusDto> RefreshDataSourceAsync(
+        Guid sessionId, int userId, string username, CancellationToken ct = default)
+    {
+        ChatSession session = await db.ChatSessions.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SessionId == sessionId, ct)
+            ?? throw AppException.NotFound("Conversation not found");
+
+        if (session.UserId != userId)
+        {
+            throw AppException.Forbidden("You can only refresh your own conversations");
+        }
+
+        if (session.DataSourceId is not { } sourceId)
+        {
+            throw new AppException("This conversation has no Data Source attached.");
+        }
+
+        return await dataSources.FetchForSessionAsync(sessionId, sourceId, userId, username, ct);
+    }
+
     private async Task<ChatSession> ResolveSessionAsync(
-        int userId, Guid? sessionId, int? projectId, CancellationToken ct)
+        int userId, Guid? sessionId, int? projectId, int? dataSourceId, string username, CancellationToken ct)
     {
         if (sessionId is null)
         {
@@ -370,17 +418,57 @@ public class ChatService(
                 resolvedProjectId = project.ProjectId;
             }
 
+            int? resolvedDataSourceId = null;
+
+            if (dataSourceId is { } wantedSourceId)
+            {
+                bool hasGrant = await db.DataSourceGrants.AsNoTracking()
+                    .AnyAsync(g => g.SourceId == wantedSourceId && g.UserId == userId && g.IsActive, ct);
+                if (!hasGrant)
+                {
+                    throw AppException.Forbidden("You do not have access to this data source");
+                }
+
+                bool sourceActive = await db.DataSources.AsNoTracking()
+                    .AnyAsync(s => s.SourceId == wantedSourceId && s.IsActive, ct);
+                if (!sourceActive)
+                {
+                    throw new AppException("This data source has been deactivated by an administrator");
+                }
+
+                resolvedDataSourceId = wantedSourceId;
+            }
+
             var created = new ChatSession
             {
                 SessionId = Guid.NewGuid(),
                 UserId = userId,
                 Title = "New conversation",
                 ProjectId = resolvedProjectId,
+                DataSourceId = resolvedDataSourceId,
                 CreatedAt = DateTime.Now,
                 UpdatedAt = DateTime.Now,
             };
             db.ChatSessions.Add(created);
             await db.SaveChangesAsync(ct);
+
+            if (resolvedDataSourceId is { } sourceId)
+            {
+                // Pull data once up front so the very first question already has it as context.
+                // A failure here must not block starting the conversation — the fetch-status
+                // endpoint surfaces the failure, and the user can retry with "Refresh".
+                try
+                {
+                    await dataSources.FetchForSessionAsync(created.SessionId, sourceId, userId, username, ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "Initial data source fetch failed for session {SessionId} (source {SourceId})",
+                        created.SessionId, sourceId);
+                }
+            }
+
             return created;
         }
 
@@ -403,7 +491,7 @@ public class ChatService(
     /// questions about the same document work — prompt caching in ClaudeClient keeps that cheap.
     /// </summary>
     private async Task<List<ChatTurn>> BuildHistoryAsync(
-        Guid sessionId, int? projectId, CancellationToken ct)
+        Guid sessionId, int? projectId, int? dataSourceId, CancellationToken ct)
     {
         // Project reference files are resent as a synthetic leading turn pair — the same
         // TurnAttachment mechanism every provider already handles for a message's own
@@ -412,6 +500,10 @@ public class ChatService(
         // resent every call the same way a chat attachment is (prompt caching already covers the
         // cost of that — see README 6.2).
         List<ChatTurn> projectTurns = await BuildProjectContextTurnsAsync(projectId, ct);
+
+        // Data pulled from a Data Source (cached at session start / on "Refresh") rides the same
+        // synthetic-turn mechanism, right after the project's own reference files.
+        List<ChatTurn> dataSourceTurns = await BuildDataSourceContextTurnsAsync(sessionId, dataSourceId, ct);
 
         List<ChatMessage> recent = await db.ChatMessages
             .AsNoTracking()
@@ -480,7 +572,7 @@ public class ChatService(
             turns.Add(new ChatTurn(message.MessageRole, message.Content, turnFiles));
         }
 
-        return [.. projectTurns, .. turns];
+        return [.. projectTurns, .. dataSourceTurns, .. turns];
     }
 
     /// <summary>
@@ -538,6 +630,48 @@ public class ChatService(
         [
             new ChatTurn(MessageRoles.User, "Reference materials for this project are attached below.", turnFiles),
             new ChatTurn(MessageRoles.Assistant, "Understood — I have the project's reference files as context."),
+        ];
+    }
+
+    /// <summary>
+    /// Builds the leading turn pair carrying the session's cached Data Source fetch, or an empty
+    /// list when there is no Data Source, no fetch has succeeded yet, or the fetch found nothing
+    /// readable. The content itself was already pulled (at session creation, or by "Refresh") —
+    /// this only resends the cached result, the same way project files are resent every call.
+    /// </summary>
+    private async Task<List<ChatTurn>> BuildDataSourceContextTurnsAsync(
+        Guid sessionId, int? dataSourceId, CancellationToken ct)
+    {
+        if (dataSourceId is null)
+        {
+            return [];
+        }
+
+        ChatSessionDataFetch? fetch = await db.ChatSessionDataFetches
+            .AsNoTracking()
+            .FirstOrDefaultAsync(f => f.SessionId == sessionId, ct);
+
+        if (fetch is null || !fetch.Success || string.IsNullOrEmpty(fetch.ContentText))
+        {
+            return [];
+        }
+
+        DataSource? source = await db.DataSources.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SourceId == fetch.SourceId, ct);
+
+        var turnFiles = new List<TurnAttachment>
+        {
+            new(
+                $"{source?.SourceName ?? "data-source"}.txt", "text/plain", FileKinds.Text,
+                Encoding.UTF8.GetBytes(fetch.ContentText), fetch.ContentText),
+        };
+
+        return
+        [
+            new ChatTurn(MessageRoles.User,
+                $"Data pulled from \"{source?.SourceName}\" is attached below (fetched {fetch.FetchedAt:yyyy-MM-dd HH:mm}).",
+                turnFiles),
+            new ChatTurn(MessageRoles.Assistant, "Understood — I have the data source's content as context."),
         ];
     }
 

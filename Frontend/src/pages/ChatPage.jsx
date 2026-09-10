@@ -59,6 +59,10 @@ export default function ChatPage() {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [skills, setSkills] = useState([]);
   const [showSkills, setShowSkills] = useState(false);
+  const [dataSourceOptions, setDataSourceOptions] = useState([]);
+  const [selectedDataSourceId, setSelectedDataSourceId] = useState(null);
+  const [dataSourceStatus, setDataSourceStatus] = useState(null);
+  const [refreshingDataSource, setRefreshingDataSource] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const bottomRef = useRef(null);
@@ -77,6 +81,7 @@ export default function ChatPage() {
   useEffect(() => {
     api('/api/projects').then(setProjects).catch(() => setProjects([]));
     api('/api/skills').then(setSkills).catch(() => setSkills([]));
+    api('/api/chat/data-sources').then(setDataSourceOptions).catch(() => setDataSourceOptions([]));
 
     const fromUrl = searchParams.get('project');
     if (fromUrl) {
@@ -113,6 +118,7 @@ export default function ChatPage() {
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
+      setDataSourceStatus(null);
       return;
     }
 
@@ -125,10 +131,33 @@ export default function ChatPage() {
         if (!cancelled) setError(err.message);
       });
 
+    api(`/api/chat/sessions/${activeSessionId}/data-source`)
+      .then((data) => {
+        if (!cancelled) setDataSourceStatus(data.sourceId ? data : null);
+      })
+      .catch(() => {
+        if (!cancelled) setDataSourceStatus(null);
+      });
+
     return () => {
       cancelled = true;
     };
   }, [activeSessionId]);
+
+  async function refreshDataSource() {
+    if (!activeSessionId || refreshingDataSource) return;
+
+    setRefreshingDataSource(true);
+    setError(null);
+
+    try {
+      setDataSourceStatus(await api(`/api/chat/sessions/${activeSessionId}/data-source/refresh`, { method: 'POST' }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRefreshingDataSource(false);
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -269,7 +298,10 @@ export default function ChatPage() {
         const form = new FormData();
         form.append('message', message);
         if (activeSessionId) form.append('sessionId', activeSessionId);
-        else if (selectedProjectId) form.append('projectId', selectedProjectId);
+        else {
+          if (selectedProjectId) form.append('projectId', selectedProjectId);
+          if (selectedDataSourceId) form.append('dataSourceId', selectedDataSourceId);
+        }
         if (model) form.append('model', model);
         if (mode) form.append('mode', mode);
         filesToSend.forEach((file) => form.append('files', file, file.name));
@@ -280,6 +312,7 @@ export default function ChatPage() {
           body: {
             sessionId: activeSessionId, message, model: model || undefined, mode,
             projectId: activeSessionId ? undefined : selectedProjectId || undefined,
+            dataSourceId: activeSessionId ? undefined : selectedDataSourceId || undefined,
           },
         });
       }
@@ -354,6 +387,7 @@ export default function ChatPage() {
             onClick={() => {
               setActiveSessionId(null);
               setSelectedProjectId(null);
+              setSelectedDataSourceId(null);
               setNotice(null);
               setError(null);
               setPending([]);
@@ -378,6 +412,7 @@ export default function ChatPage() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="chat-session-title">
                   {session.projectName && <span className="badge badge-brand" style={{ marginRight: 6 }}>{session.projectName}</span>}
+                  {session.dataSourceName && <span className="badge badge-info" style={{ marginRight: 6 }}>🔌 {session.dataSourceName}</span>}
                   {session.title}
                 </div>
                 <div className="chat-session-meta">
@@ -429,6 +464,25 @@ export default function ChatPage() {
 
           {error && <div className="alert alert-danger">{error}</div>}
           {notice && <div className="alert alert-warn">{notice}</div>}
+
+          {dataSourceStatus && (
+            <div className={`alert ${dataSourceStatus.success ? 'alert-ok' : 'alert-warn'}`}>
+              <strong>🔌 {dataSourceStatus.sourceName}</strong> — {dataSourceStatus.message}
+              {dataSourceStatus.success && dataSourceStatus.charCount > 0 && (
+                <> ({dataSourceStatus.charCount.toLocaleString()} characters{dataSourceStatus.truncated ? ', truncated' : ''})</>
+              )}
+              {' · '}fetched {formatTime(dataSourceStatus.fetchedAt)}
+              {' · '}
+              <button
+                type="button"
+                className="btn-link"
+                onClick={refreshDataSource}
+                disabled={refreshingDataSource}
+              >
+                {refreshingDataSource ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+          )}
 
           {messages.length === 0 && !sending && (
             <div className="chat-welcome">
@@ -593,6 +647,27 @@ export default function ChatPage() {
                     {projects.map((p) => (
                       <option key={p.projectId} value={p.projectId}>
                         {p.name}{p.ownerUserId !== undefined && !p.canEdit ? ' (shared)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
+              {!activeSessionId && dataSourceOptions.length > 0 && (
+                <>
+                  <label htmlFor="data-source" style={{ margin: 0 }}>
+                    Data source
+                  </label>
+                  <select
+                    id="data-source"
+                    value={selectedDataSourceId ?? ''}
+                    onChange={(e) => setSelectedDataSourceId(e.target.value ? Number(e.target.value) : null)}
+                    disabled={sending}
+                  >
+                    <option value="">No data source</option>
+                    {dataSourceOptions.map((s) => (
+                      <option key={s.sourceId} value={s.sourceId}>
+                        {s.sourceName} ({s.sourceType})
                       </option>
                     ))}
                   </select>

@@ -131,7 +131,11 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
         }
     }
 
-    private static void ApplyAuth(
+    /// <summary>
+    /// Internal (not private) so <see cref="DataSourceFetchers.ApiFetcher"/> applies the exact same
+    /// auth logic when actually pulling data — one place decides how a secret becomes a header.
+    /// </summary>
+    internal static void ApplyAuth(
         HttpRequestMessage request, string authType, Dictionary<string, string> config, string? secret)
     {
         switch (authType.ToLowerInvariant())
@@ -188,49 +192,15 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
 
-        // ---- 1. client-credentials token ----
-        string? token;
-        try
+        (string? token, string? tokenError) = await SharePointAuth.AcquireTokenAsync(http, tenantId, clientId, secret, ct);
+        if (token is null)
         {
-            var form = new FormUrlEncodedContent(new Dictionary<string, string>
-            {
-                ["client_id"] = clientId,
-                ["client_secret"] = secret,
-                ["scope"] = "https://graph.microsoft.com/.default",
-                ["grant_type"] = "client_credentials",
-            });
-
-            using HttpResponseMessage tokenResponse = await http.PostAsync(
-                $"https://login.microsoftonline.com/{Uri.EscapeDataString(tenantId)}/oauth2/v2.0/token",
-                form, ct);
-
-            string tokenBody = await tokenResponse.Content.ReadAsStringAsync(ct);
-
-            if (!tokenResponse.IsSuccessStatusCode)
-            {
-                string detail = ReadJsonField(tokenBody, "error_description") ?? tokenBody;
-                return new DataSourceTestResult(false,
-                    $"Entra ID rejected the sign-in (HTTP {(int)tokenResponse.StatusCode}): " +
-                    $"{Truncate(detail, 200)}", DateTime.Now);
-            }
-
-            token = ReadJsonField(tokenBody, "access_token");
-            if (token is null)
-            {
-                return new DataSourceTestResult(false,
-                    "Entra ID returned no access token.", DateTime.Now);
-            }
-        }
-        catch (HttpRequestException ex)
-        {
-            return new DataSourceTestResult(false,
-                $"Could not reach Microsoft Entra ID: {ex.Message}", DateTime.Now);
+            return new DataSourceTestResult(false, tokenError!, DateTime.Now);
         }
 
-        // ---- 2. Graph: resolve the site ----
         // A full site URL (https://contoso.sharepoint.com/sites/Sales) becomes the Graph path
         // "contoso.sharepoint.com:/sites/Sales" — Graph's documented way to address a site by URL.
-        string graphPath = $"{site.Host}:{site.AbsolutePath}";
+        string graphPath = SharePointAuth.GraphSitePath(site);
 
         try
         {
@@ -243,7 +213,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 
             if (response.IsSuccessStatusCode)
             {
-                string name = ReadJsonField(body, "displayName") ?? site.AbsolutePath;
+                string name = SharePointAuth.ReadJsonField(body, "displayName") ?? site.AbsolutePath;
                 return new DataSourceTestResult(true,
                     $"Connected to SharePoint site \"{name}\".", DateTime.Now);
             }
@@ -264,7 +234,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
             }
 
             return new DataSourceTestResult(false,
-                $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {Truncate(body, 150)}",
+                $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {SharePointAuth.Truncate(body, 150)}",
                 DateTime.Now);
         }
         catch (HttpRequestException ex)
@@ -273,21 +243,6 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
                 $"Could not reach Microsoft Graph: {ex.Message}", DateTime.Now);
         }
     }
-
-    private static string? ReadJsonField(string json, string field)
-    {
-        try
-        {
-            using JsonDocument doc = JsonDocument.Parse(json);
-            return doc.RootElement.TryGetProperty(field, out JsonElement value) ? value.GetString() : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
 }
 
 /// <summary>
@@ -307,4 +262,66 @@ public class DataLakeConnectionTester : IDataSourceConnectionTester
             "for planning. When a platform is chosen (e.g. Microsoft Fabric / OneLake, Databricks), " +
             "a connector needs to be built for it before this source can be tested or used.",
             DateTime.Now));
+}
+
+/// <summary>
+/// Client-credentials OAuth2 + small Graph JSON helpers shared between
+/// <see cref="SharePointConnectionTester"/> (which only checks the sign-in works) and
+/// <see cref="DataSourceFetchers.SharePointFetcher"/> (which actually reads files) — one place
+/// decides how a SharePoint secret becomes a Graph access token.
+/// </summary>
+internal static class SharePointAuth
+{
+    public static async Task<(string? Token, string? Error)> AcquireTokenAsync(
+        HttpClient http, string tenantId, string clientId, string secret, CancellationToken ct)
+    {
+        try
+        {
+            var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = clientId,
+                ["client_secret"] = secret,
+                ["scope"] = "https://graph.microsoft.com/.default",
+                ["grant_type"] = "client_credentials",
+            });
+
+            using HttpResponseMessage tokenResponse = await http.PostAsync(
+                $"https://login.microsoftonline.com/{Uri.EscapeDataString(tenantId)}/oauth2/v2.0/token",
+                form, ct);
+
+            string tokenBody = await tokenResponse.Content.ReadAsStringAsync(ct);
+
+            if (!tokenResponse.IsSuccessStatusCode)
+            {
+                string detail = ReadJsonField(tokenBody, "error_description") ?? tokenBody;
+                return (null, $"Entra ID rejected the sign-in (HTTP {(int)tokenResponse.StatusCode}): " +
+                               $"{Truncate(detail, 200)}");
+            }
+
+            string? token = ReadJsonField(tokenBody, "access_token");
+            return token is null ? (null, "Entra ID returned no access token.") : (token, null);
+        }
+        catch (HttpRequestException ex)
+        {
+            return (null, $"Could not reach Microsoft Entra ID: {ex.Message}");
+        }
+    }
+
+    /// <summary>https://contoso.sharepoint.com/sites/Sales → "contoso.sharepoint.com:/sites/Sales"</summary>
+    public static string GraphSitePath(Uri site) => $"{site.Host}:{site.AbsolutePath}";
+
+    public static string? ReadJsonField(string json, string field)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty(field, out JsonElement value) ? value.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
 }

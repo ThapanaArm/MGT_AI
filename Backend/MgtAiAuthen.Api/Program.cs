@@ -178,6 +178,10 @@ builder.Services.AddSingleton<IDataSourceConnectionTester, LocalFolderConnection
 builder.Services.AddSingleton<IDataSourceConnectionTester, ApiConnectionTester>();
 builder.Services.AddSingleton<IDataSourceConnectionTester, SharePointConnectionTester>();
 builder.Services.AddSingleton<IDataSourceConnectionTester, DataLakeConnectionTester>();
+builder.Services.AddSingleton<IDataSourceFetcher, LocalFolderFetcher>();
+builder.Services.AddSingleton<IDataSourceFetcher, ApiFetcher>();
+builder.Services.AddSingleton<IDataSourceFetcher, SharePointFetcher>();
+builder.Services.AddSingleton<IDataSourceFetcher, DataLakeFetcher>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
 // Self-service Projects and Skills — any signed-in employee, not just Admin.

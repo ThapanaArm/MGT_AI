@@ -3,6 +3,7 @@ using MgtAiAuthen.Api.Data;
 using MgtAiAuthen.Api.Options;
 using MgtAiAuthen.Api.Security;
 using MgtAiAuthen.Api.Services;
+using MgtAiAuthen.Api.Services.DataSources;
 using MgtAiAuthen.Api.Services.Reporting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,7 @@ public class ChatController(
     IChatService chat,
     IAiClient ai,
     IReportService reports,
+    IDataSourceService dataSources,
     IOptions<UploadOptions> uploadOptions) : ControllerBase
 {
     private readonly UploadOptions _uploads = uploadOptions.Value;
@@ -81,6 +83,24 @@ public class ChatController(
     public async Task<ActionResult<IReadOnlyList<ChatSessionDto>>> GetSessions(CancellationToken ct)
         => Ok(await chat.GetSessionsAsync(User.GetUserId(), ct));
 
+    /// <summary>Data sources the signed-in user may attach to a brand-new conversation (active grants only).</summary>
+    [HttpGet("data-sources")]
+    [ProducesResponseType(typeof(IReadOnlyList<AvailableDataSourceDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<AvailableDataSourceDto>>> GetAvailableDataSources(CancellationToken ct)
+        => Ok(await dataSources.GetAvailableForUserAsync(User.GetUserId(), ct));
+
+    /// <summary>The cached result of pulling this conversation's Data Source, or all-null fields if it has none.</summary>
+    [HttpGet("sessions/{sessionId:guid}/data-source")]
+    [ProducesResponseType(typeof(DataSourceFetchStatusDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<DataSourceFetchStatusDto>> GetDataSourceStatus(Guid sessionId, CancellationToken ct)
+        => Ok(await chat.GetDataSourceStatusAsync(sessionId, User.GetUserId(), User.CanReadAllLogs(), ct));
+
+    /// <summary>Re-pulls this conversation's Data Source right now, overwriting the cached fetch.</summary>
+    [HttpPost("sessions/{sessionId:guid}/data-source/refresh")]
+    [ProducesResponseType(typeof(DataSourceFetchStatusDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<DataSourceFetchStatusDto>> RefreshDataSource(Guid sessionId, CancellationToken ct)
+        => Ok(await chat.RefreshDataSourceAsync(sessionId, User.GetUserId(), User.GetUsername(), ct));
+
     /// <summary>ข้อความทั้งหมดในบทสนทนา — Admin/Auditor เปิดดูของพนักงานคนอื่นได้</summary>
     [HttpGet("sessions/{sessionId:guid}/messages")]
     [ProducesResponseType(typeof(IReadOnlyList<ChatMessageDto>), StatusCodes.Status200OK)]
@@ -120,6 +140,7 @@ public class ChatController(
         [FromForm] string? model,
         [FromForm] string? mode,
         [FromForm] int? projectId,
+        [FromForm] int? dataSourceId,
         [FromForm] IFormFileCollection? files,
         CancellationToken ct)
     {
@@ -130,6 +151,7 @@ public class ChatController(
             Model = model,
             Mode = mode,
             ProjectId = projectId,
+            DataSourceId = dataSourceId,
         };
         IReadOnlyList<IFormFile> uploaded = files ?? (IReadOnlyList<IFormFile>)[];
 
