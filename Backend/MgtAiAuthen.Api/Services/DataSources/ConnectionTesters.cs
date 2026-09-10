@@ -142,13 +142,20 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
     /// "requestBody" is only meaningful for POST — sent as-is (the admin types raw JSON, or
     /// whatever the target endpoint expects) with an application/json content type. A GET never
     /// carries a body, even if one was typed in and the method was switched back afterwards.
+    ///
+    /// A POST always gets a body, even when the admin left "requestBody" blank — an empty
+    /// StringContent still sets the Content-Type header, whereas a null HttpContent sends the
+    /// request with no Content-Type at all. Several ASP.NET-style APIs (including this app's own
+    /// backend) reject a POST with no Content-Type as 415 Unsupported Media Type before even
+    /// looking at the body, so a bare "{}" here is the difference between reaching the endpoint
+    /// and never getting past its model binder.
     /// </summary>
     internal static HttpContent? BuildBody(Dictionary<string, string> config)
     {
         if (ResolveMethod(config) != HttpMethod.Post) return null;
 
-        string body = config.GetValueOrDefault("requestBody", "");
-        return body.Length == 0 ? null : new StringContent(body, Encoding.UTF8, "application/json");
+        string body = config.GetValueOrDefault("requestBody", "").Trim();
+        return new StringContent(body.Length == 0 ? "{}" : body, Encoding.UTF8, "application/json");
     }
 
     /// <summary>
