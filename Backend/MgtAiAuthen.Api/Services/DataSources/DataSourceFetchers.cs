@@ -193,10 +193,13 @@ public class ApiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetch
         ApiConnectionTester.ApplyAuth(request, authType, config, secret);
         request.Content = ApiConnectionTester.BuildBody(config);
 
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(ApiConnectionTester.ResolveTimeout(config));
+
         try
         {
-            using HttpResponseMessage response = await http.SendAsync(request, ct);
-            string body = await response.Content.ReadAsStringAsync(ct);
+            using HttpResponseMessage response = await http.SendAsync(request, timeoutCts.Token);
+            string body = await response.Content.ReadAsStringAsync(timeoutCts.Token);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -214,7 +217,9 @@ public class ApiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetch
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            return new DataSourceFetchResult(false, $"Timed out waiting for {uri.Host}.", null, 0, false);
+            return new DataSourceFetchResult(false,
+                $"Timed out waiting for {uri.Host} (after {ApiConnectionTester.ResolveTimeout(config).TotalMinutes:0.#} " +
+                "minute(s) — raise \"Timeout (minutes)\" if this endpoint is just slow).", null, 0, false);
         }
         catch (HttpRequestException ex)
         {

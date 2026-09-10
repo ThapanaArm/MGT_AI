@@ -188,9 +188,14 @@ builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 builder.Services.AddScoped<IProjectService, ProjectService>();
 builder.Services.AddScoped<ISkillService, SkillService>();
 
+// The client's own Timeout is just a ceiling — the real, per-source limit is the
+// "timeoutMinutes" config key, enforced per request via a linked CancellationToken
+// (see ApiConnectionTester.ResolveTimeout) because HttpClient.Timeout is fixed per named
+// client and can't vary by data source. 30 minutes comfortably covers any timeoutMinutes an
+// admin would reasonably set.
 builder.Services.AddHttpClient(ApiConnectionTester.HttpClientName, client =>
 {
-    client.Timeout = TimeSpan.FromSeconds(15);
+    client.Timeout = TimeSpan.FromMinutes(30);
 });
 builder.Services.AddHttpClient(SharePointConnectionTester.HttpClientName, client =>
 {

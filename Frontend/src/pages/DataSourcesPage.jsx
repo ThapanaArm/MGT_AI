@@ -25,6 +25,7 @@ const CONFIG_FIELDS = {
     },
     { key: 'apiKeyHeader', label: 'API key header (if Auth type = ApiKey)', placeholder: 'X-API-Key' },
     { key: 'username', label: 'Username (if Auth type = Basic)' },
+    { key: 'timeoutMinutes', label: 'Timeout (minutes)', placeholder: '2 (default)' },
     {
       key: 'requestBody', label: 'Request body (if HTTP method = POST)', type: 'textarea',
       placeholder: '{ "example": "raw JSON sent as-is, ignored for GET" }',

@@ -85,6 +85,16 @@ public static class DataSourceConfig
             {
                 throw new AppException("method must be GET or POST");
             }
+
+            // Blank = 2 minutes (see ApiConnectionTester.ResolveTimeout).
+            string timeoutMinutes = config.GetValueOrDefault("timeoutMinutes", "").Trim();
+            if (timeoutMinutes.Length > 0
+                && (!double.TryParse(timeoutMinutes, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double minutes)
+                    || minutes <= 0))
+            {
+                throw new AppException("timeoutMinutes must be a positive number");
+            }
         }
     }
 }

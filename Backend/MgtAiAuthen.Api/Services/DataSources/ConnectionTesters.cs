@@ -105,9 +105,12 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
         ApplyAuth(request, authType, config, secret);
         request.Content = BuildBody(config);
 
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(ResolveTimeout(config));
+
         try
         {
-            using HttpResponseMessage response = await http.SendAsync(request, ct);
+            using HttpResponseMessage response = await http.SendAsync(request, timeoutCts.Token);
 
             if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized
                 or System.Net.HttpStatusCode.Forbidden)
@@ -124,12 +127,28 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            return new DataSourceTestResult(false, $"Timed out waiting for {uri.Host}.", DateTime.Now);
+            return new DataSourceTestResult(false,
+                $"Timed out waiting for {uri.Host} (after {ResolveTimeout(config).TotalMinutes:0.#} minute(s) — " +
+                "raise \"Timeout (minutes)\" if this endpoint is just slow).", DateTime.Now);
         }
         catch (HttpRequestException ex)
         {
             return new DataSourceTestResult(false, $"Could not reach {uri.Host}: {ex.Message}", DateTime.Now);
         }
+    }
+
+    /// <summary>
+    /// Blank/missing "timeoutMinutes" = 2 minutes. A per-request cancellation (rather than the
+    /// HttpClient's own Timeout, which is fixed per named client) so every source can set its own
+    /// value — a slow internal report endpoint needs longer than a quick health check does.
+    /// </summary>
+    internal static TimeSpan ResolveTimeout(Dictionary<string, string> config)
+    {
+        string raw = config.GetValueOrDefault("timeoutMinutes", "").Trim();
+        return double.TryParse(raw, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out double minutes) && minutes > 0
+            ? TimeSpan.FromMinutes(minutes)
+            : TimeSpan.FromMinutes(2);
     }
 
     /// <summary>Blank/missing "method" = GET, so every source registered before this field existed is unaffected.</summary>
