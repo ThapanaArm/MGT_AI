@@ -69,6 +69,18 @@ public static class AuditActions
     public const string DataSourceTested = "DATASOURCE_TESTED";
     public const string DataSourceGranted = "DATASOURCE_GRANTED";
     public const string DataSourceRevoked = "DATASOURCE_REVOKED";
+
+    public const string ProjectCreated = "PROJECT_CREATED";
+    public const string ProjectUpdated = "PROJECT_UPDATED";
+    public const string ProjectDeleted = "PROJECT_DELETED";
+    public const string ProjectFileUploaded = "PROJECT_FILE_UPLOADED";
+    public const string ProjectFileRejected = "PROJECT_FILE_REJECTED";
+    public const string ProjectFileDownloaded = "PROJECT_FILE_DOWNLOADED";
+    public const string ProjectFileDeleted = "PROJECT_FILE_DELETED";
+
+    public const string SkillCreated = "SKILL_CREATED";
+    public const string SkillUpdated = "SKILL_UPDATED";
+    public const string SkillDeleted = "SKILL_DELETED";
 }
 
 /// <summary>ผลของการคัดกรองข้อความตาม PolicyRules</summary>
@@ -187,11 +199,69 @@ public class ChatSession
     public string Title { get; set; } = "New conversation";
     public int MessageCount { get; set; }
     public bool IsDeleted { get; set; }
+
+    /// <summary>Set only when the session is created; never changed afterwards — see Project.</summary>
+    public int? ProjectId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime UpdatedAt { get; set; } = DateTime.Now;
 
     public AppUser? User { get; set; }
+    public Project? Project { get; set; }
     public ICollection<ChatMessage> Messages { get; set; } = new List<ChatMessage>();
+}
+
+/// <summary>
+/// dbo.Projects — a self-service workspace: standing instructions appended to the system prompt
+/// of every message in every conversation under it, plus reference files resent every turn the
+/// same way a chat attachment is. Unlike the data source registry, any employee creates and owns
+/// these; IsShared only widens who may *use* one (start a chat in it), never who may edit it.
+/// </summary>
+public class Project
+{
+    public int ProjectId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Instructions { get; set; }
+    public int OwnerUserId { get; set; }
+    public bool IsShared { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? UpdatedAt { get; set; }
+}
+
+/// <summary>dbo.ProjectFiles — reference material attached at the project level, not one message.</summary>
+public class ProjectFile
+{
+    public long ProjectFileId { get; set; }
+    public int ProjectId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public string FileKind { get; set; } = FileKinds.Text;
+    public long SizeBytes { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+    public string StoredPath { get; set; } = string.Empty;
+    public bool IsTextExtracted { get; set; }
+    public int? ExtractedChars { get; set; }
+    public bool PolicyScanned { get; set; }
+    public int UserId { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+}
+
+/// <summary>
+/// dbo.Skills — a personal, reusable prompt snippet. Purely text: clicking one inserts its Body
+/// into the compose box, nothing more. It never reaches the model on its own; the employee still
+/// reviews and sends the message themselves.
+/// </summary>
+public class Skill
+{
+    public int SkillId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public int OwnerUserId { get; set; }
+    public bool IsShared { get; set; }
+    public bool IsDeleted { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime? UpdatedAt { get; set; }
 }
 
 /// <summary>dbo.ChatMessages — log ของทุกข้อความที่พนักงานถามและที่ AI ตอบ</summary>

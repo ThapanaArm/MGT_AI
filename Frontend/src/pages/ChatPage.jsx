@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, apiForm, download } from '../api/client';
 import MessageContent from '../components/MessageContent';
 import {
@@ -10,6 +11,9 @@ import {
   formatTime,
   questionTypeLabel,
 } from '../lib/constants';
+
+/** คั่นสองบรรทัดเวลาแทรก Skill ต่อท้ายข้อความที่พิมพ์ไว้แล้ว — เขียนแยกตัวแปรเพื่อเลี่ยงปัญหา escape ของบรรทัดใหม่ */
+const NEWLINE_GAP = String.fromCharCode(10, 10);
 
 /** รูปแบบที่ส่งออกได้ — ตรงกับ ReportFormats ฝั่ง backend */
 const EXPORT_FORMATS = [
@@ -51,6 +55,11 @@ export default function ChatPage() {
   const [model, setModel] = useState('');
   const [mode, setMode] = useState('Chat');
   const [exporting, setExporting] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [skills, setSkills] = useState([]);
+  const [showSkills, setShowSkills] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -63,6 +72,19 @@ export default function ChatPage() {
     } catch (err) {
       setError(err.message);
     }
+  }, []);
+
+  useEffect(() => {
+    api('/api/projects').then(setProjects).catch(() => setProjects([]));
+    api('/api/skills').then(setSkills).catch(() => setSkills([]));
+
+    const fromUrl = searchParams.get('project');
+    if (fromUrl) {
+      setActiveSessionId(null);
+      setSelectedProjectId(Number(fromUrl));
+      setSearchParams({}, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -247,6 +269,7 @@ export default function ChatPage() {
         const form = new FormData();
         form.append('message', message);
         if (activeSessionId) form.append('sessionId', activeSessionId);
+        else if (selectedProjectId) form.append('projectId', selectedProjectId);
         if (model) form.append('model', model);
         if (mode) form.append('mode', mode);
         filesToSend.forEach((file) => form.append('files', file, file.name));
@@ -254,7 +277,10 @@ export default function ChatPage() {
       } else {
         result = await api('/api/chat/messages', {
           method: 'POST',
-          body: { sessionId: activeSessionId, message, model: model || undefined, mode },
+          body: {
+            sessionId: activeSessionId, message, model: model || undefined, mode,
+            projectId: activeSessionId ? undefined : selectedProjectId || undefined,
+          },
         });
       }
 
@@ -327,6 +353,7 @@ export default function ChatPage() {
             className="btn"
             onClick={() => {
               setActiveSessionId(null);
+              setSelectedProjectId(null);
               setNotice(null);
               setError(null);
               setPending([]);
@@ -349,7 +376,10 @@ export default function ChatPage() {
               onKeyDown={(e) => e.key === 'Enter' && setActiveSessionId(session.sessionId)}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="chat-session-title">{session.title}</div>
+                <div className="chat-session-title">
+                  {session.projectName && <span className="badge badge-brand" style={{ marginRight: 6 }}>{session.projectName}</span>}
+                  {session.title}
+                </div>
                 <div className="chat-session-meta">
                   {session.messageCount} messages · {formatTime(session.updatedAt)}
                 </div>
@@ -548,6 +578,27 @@ export default function ChatPage() {
                 ))}
               </span>
 
+              {!activeSessionId && projects.length > 0 && (
+                <>
+                  <label htmlFor="project" style={{ margin: 0 }}>
+                    Project
+                  </label>
+                  <select
+                    id="project"
+                    value={selectedProjectId ?? ''}
+                    onChange={(e) => setSelectedProjectId(e.target.value ? Number(e.target.value) : null)}
+                    disabled={sending}
+                  >
+                    <option value="">No project</option>
+                    {projects.map((p) => (
+                      <option key={p.projectId} value={p.projectId}>
+                        {p.name}{p.ownerUserId !== undefined && !p.canEdit ? ' (shared)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
+
               <label htmlFor="model" style={{ margin: 0 }}>
                 Model
               </label>
@@ -635,6 +686,39 @@ export default function ChatPage() {
             >
               📎
             </button>
+
+            {skills.length > 0 && (
+              <div className="skills-picker">
+                <button
+                  type="button"
+                  className="btn btn-secondary attach-btn"
+                  title="Insert a saved skill"
+                  onClick={() => setShowSkills((v) => !v)}
+                  disabled={sending}
+                >
+                  ⚡
+                </button>
+                {showSkills && (
+                  <div className="skills-popover">
+                    {skills.map((s) => (
+                      <button
+                        key={s.skillId}
+                        type="button"
+                        className="skills-popover-item"
+                        title={s.body}
+                        onClick={() => {
+                          setDraft((prev) => (prev.trim() ? [prev, s.body].join(NEWLINE_GAP) : s.body));
+                          setShowSkills(false);
+                        }}
+                      >
+                        {s.name}
+                        {!s.canEdit && <span className="faint"> (shared)</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <textarea
               value={draft}

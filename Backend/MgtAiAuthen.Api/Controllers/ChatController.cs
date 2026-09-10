@@ -119,6 +119,7 @@ public class ChatController(
         [FromForm] Guid? sessionId,
         [FromForm] string? model,
         [FromForm] string? mode,
+        [FromForm] int? projectId,
         [FromForm] IFormFileCollection? files,
         CancellationToken ct)
     {
@@ -128,6 +129,7 @@ public class ChatController(
             SessionId = sessionId,
             Model = model,
             Mode = mode,
+            ProjectId = projectId,
         };
         IReadOnlyList<IFormFile> uploaded = files ?? (IReadOnlyList<IFormFile>)[];
 

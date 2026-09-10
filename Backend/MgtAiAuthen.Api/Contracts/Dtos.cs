@@ -82,6 +82,12 @@ public record ChatSendRequest
     /// </summary>
     [RegularExpression("^(?i)(Chat|Code)$", ErrorMessage = "Mode must be Chat or Code")]
     public string? Mode { get; init; }
+
+    /// <summary>
+    /// Ties a brand-new conversation to a Project — ignored when SessionId is set, because a
+    /// session's project is fixed at creation (see Project.cs for why).
+    /// </summary>
+    public int? ProjectId { get; init; }
 }
 
 /// <summary>One model the user may pick, with enough pricing context to choose sensibly.</summary>
@@ -153,6 +159,8 @@ public record ChatSessionDto(
     Guid SessionId,
     string Title,
     int MessageCount,
+    int? ProjectId,
+    string? ProjectName,
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
@@ -240,6 +248,8 @@ public record ChatLogItemDto(
     string? ClientIp,
     int AttachmentCount,
     IReadOnlyList<ChatAttachmentDto> Attachments,
+    int? ProjectId,
+    string? ProjectName,
     DateTime CreatedAt);
 
 public record NamedCount(string Key, string Label, int Count);
@@ -601,4 +611,73 @@ public record DataSourceGrantRequest
 
     [StringLength(500)]
     public string? Notes { get; init; }
+}
+
+// ---------------------------------------------------------------- Projects (self-service)
+
+public record ProjectDto(
+    int ProjectId,
+    string Name,
+    string? Instructions,
+    int OwnerUserId,
+    string OwnerUsername,
+    string OwnerFullName,
+    bool IsShared,
+    /// <summary>true = the caller may edit instructions, add/remove files, or delete this project.</summary>
+    bool CanEdit,
+    int FileCount,
+    int SessionCount,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt);
+
+public record ProjectUpsertRequest
+{
+    [Required(ErrorMessage = "Project name is required")]
+    [StringLength(150)]
+    public string Name { get; init; } = string.Empty;
+
+    [StringLength(20000, ErrorMessage = "Instructions exceed 20,000 characters")]
+    public string? Instructions { get; init; }
+
+    public bool IsShared { get; init; }
+}
+
+public record ProjectFileDto(
+    long ProjectFileId,
+    string FileName,
+    string ContentType,
+    string FileKind,
+    long SizeBytes,
+    bool IsTextExtracted,
+    /// <summary>false = policy screened by file name only (PDF/images) — same limitation as chat attachments.</summary>
+    bool PolicyScanned,
+    string Sha256,
+    string UploadedByUsername,
+    DateTime CreatedAt);
+
+// ---------------------------------------------------------------- Skills (self-service)
+
+public record SkillDto(
+    int SkillId,
+    string Name,
+    string Body,
+    int OwnerUserId,
+    string OwnerUsername,
+    string OwnerFullName,
+    bool IsShared,
+    bool CanEdit,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt);
+
+public record SkillUpsertRequest
+{
+    [Required(ErrorMessage = "Skill name is required")]
+    [StringLength(150)]
+    public string Name { get; init; } = string.Empty;
+
+    [Required(ErrorMessage = "Skill body is required")]
+    [StringLength(20000, ErrorMessage = "Skill body exceeds 20,000 characters")]
+    public string Body { get; init; } = string.Empty;
+
+    public bool IsShared { get; init; }
 }

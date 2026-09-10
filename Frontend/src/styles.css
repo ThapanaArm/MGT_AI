@@ -1438,3 +1438,74 @@ tbody tr:last-child td {
   cursor: not-allowed;
   text-decoration: none;
 }
+
+/* ---------------------------------------------- Skills picker (composer) */
+
+.skills-picker {
+  position: relative;
+}
+
+.skills-popover {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 6px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+  z-index: 20;
+}
+
+.skills-popover-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.skills-popover-item:hover {
+  background: var(--surface-2);
+}
+
+/* ---------------------------------------------- Projects / Skills pages */
+
+.project-row {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.project-row:last-child {
+  border-bottom: none;
+}
+
+.project-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-instructions {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.project-files {
+  margin-top: 12px;
+}

@@ -12,6 +12,8 @@ import ModelPricingPage from './pages/ModelPricingPage';
 import UsersPage from './pages/UsersPage';
 import DataSourcesPage from './pages/DataSourcesPage';
 import DataSourceGrantsPage from './pages/DataSourceGrantsPage';
+import ProjectsPage from './pages/ProjectsPage';
+import SkillsPage from './pages/SkillsPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 
 export default function App() {
@@ -34,6 +36,8 @@ export default function App() {
       >
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/skills" element={<SkillsPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
 
         <Route

@@ -17,6 +17,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ModelPricing> ModelPricing => Set<ModelPricing>();
     public DbSet<DataSource> DataSources => Set<DataSource>();
     public DbSet<DataSourceGrant> DataSourceGrants => Set<DataSourceGrant>();
+    public DbSet<Project> Projects => Set<Project>();
+    public DbSet<ProjectFile> ProjectFiles => Set<ProjectFile>();
+    public DbSet<Skill> Skills => Set<Skill>();
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -87,7 +90,60 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.IsDeleted).HasColumnName("IsDeleted");
             e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
+            e.Property(x => x.ProjectId).HasColumnName("ProjectId");
             e.HasOne(x => x.User).WithMany(u => u.Sessions).HasForeignKey(x => x.UserId);
+            e.HasOne(x => x.Project).WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<Project>(e =>
+        {
+            e.ToTable("Projects");
+            e.HasKey(x => x.ProjectId);
+            e.Property(x => x.ProjectId).HasColumnName("ProjectId");
+            e.Property(x => x.Name).HasColumnName("Name").HasMaxLength(150).IsRequired();
+            e.Property(x => x.Instructions).HasColumnName("Instructions");
+            e.Property(x => x.OwnerUserId).HasColumnName("OwnerUserId");
+            e.Property(x => x.IsShared).HasColumnName("IsShared");
+            e.Property(x => x.IsDeleted).HasColumnName("IsDeleted");
+            e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
+            e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
+            e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.OwnerUserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<ProjectFile>(e =>
+        {
+            e.ToTable("ProjectFiles");
+            e.HasKey(x => x.ProjectFileId);
+            e.Property(x => x.ProjectFileId).HasColumnName("ProjectFileId");
+            e.Property(x => x.ProjectId).HasColumnName("ProjectId");
+            e.Property(x => x.FileName).HasColumnName("FileName").HasMaxLength(260).IsRequired();
+            e.Property(x => x.ContentType).HasColumnName("ContentType").HasMaxLength(150).IsRequired();
+            e.Property(x => x.FileKind).HasColumnName("FileKind").HasMaxLength(20).IsRequired();
+            e.Property(x => x.SizeBytes).HasColumnName("SizeBytes");
+            e.Property(x => x.Sha256).HasColumnName("Sha256").HasMaxLength(64).IsRequired();
+            e.Property(x => x.StoredPath).HasColumnName("StoredPath").HasMaxLength(500).IsRequired();
+            e.Property(x => x.IsTextExtracted).HasColumnName("IsTextExtracted");
+            e.Property(x => x.ExtractedChars).HasColumnName("ExtractedChars");
+            e.Property(x => x.PolicyScanned).HasColumnName("PolicyScanned");
+            e.Property(x => x.UserId).HasColumnName("UserId");
+            e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
+            e.HasOne<Project>().WithMany().HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        b.Entity<Skill>(e =>
+        {
+            e.ToTable("Skills");
+            e.HasKey(x => x.SkillId);
+            e.Property(x => x.SkillId).HasColumnName("SkillId");
+            e.Property(x => x.Name).HasColumnName("Name").HasMaxLength(150).IsRequired();
+            e.Property(x => x.Body).HasColumnName("Body").IsRequired();
+            e.Property(x => x.OwnerUserId).HasColumnName("OwnerUserId");
+            e.Property(x => x.IsShared).HasColumnName("IsShared");
+            e.Property(x => x.IsDeleted).HasColumnName("IsDeleted");
+            e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
+            e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
+            e.HasOne<AppUser>().WithMany().HasForeignKey(x => x.OwnerUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         b.Entity<ChatMessage>(e =>

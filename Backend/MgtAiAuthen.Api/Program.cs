@@ -180,6 +180,10 @@ builder.Services.AddSingleton<IDataSourceConnectionTester, SharePointConnectionT
 builder.Services.AddSingleton<IDataSourceConnectionTester, DataLakeConnectionTester>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
+// Self-service Projects and Skills — any signed-in employee, not just Admin.
+builder.Services.AddScoped<IProjectService, ProjectService>();
+builder.Services.AddScoped<ISkillService, SkillService>();
+
 builder.Services.AddHttpClient(ApiConnectionTester.HttpClientName, client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);

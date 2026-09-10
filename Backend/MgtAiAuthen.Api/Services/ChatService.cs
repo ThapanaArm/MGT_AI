@@ -52,7 +52,10 @@ public class ChatService(
             .AsNoTracking()
             .Where(s => s.UserId == userId && !s.IsDeleted)
             .OrderByDescending(s => s.UpdatedAt)
-            .Select(s => new ChatSessionDto(s.SessionId, s.Title, s.MessageCount, s.CreatedAt, s.UpdatedAt))
+            .Select(s => new ChatSessionDto(
+                s.SessionId, s.Title, s.MessageCount,
+                s.ProjectId, s.Project == null ? null : s.Project.Name,
+                s.CreatedAt, s.UpdatedAt))
             .ToListAsync(ct);
 
     public async Task<IReadOnlyList<ChatMessageDto>> GetMessagesAsync(
@@ -105,7 +108,7 @@ public class ChatService(
         AppUser user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.UserId == userId, ct)
             ?? throw AppException.NotFound("User not found");
 
-        ChatSession session = await ResolveSessionAsync(userId, request.SessionId, ct);
+        ChatSession session = await ResolveSessionAsync(userId, request.SessionId, request.ProjectId, ct);
 
         List<StoredFile> storedFiles = [];
         if (incoming.Count > 0)
@@ -221,13 +224,13 @@ public class ChatService(
                 isSuccess: true, ct);
         }
 
-        List<ChatTurn> turns = await BuildHistoryAsync(session.SessionId, ct);
+        List<ChatTurn> turns = await BuildHistoryAsync(session.SessionId, session.ProjectId, ct);
 
         AiReply reply;
         try
         {
             reply = await ai.CompleteAsync(
-                BuildSystemPrompt(user, mode), turns, model, chosen.Provider, ct);
+                await BuildSystemPromptAsync(user, mode, session.ProjectId, ct), turns, model, chosen.Provider, ct);
         }
         catch (AiUnavailableException)
         {
@@ -345,15 +348,34 @@ public class ChatService(
             $"Hid conversation {sessionId} (messages remain in the log)", isSuccess: true, ct);
     }
 
-    private async Task<ChatSession> ResolveSessionAsync(int userId, Guid? sessionId, CancellationToken ct)
+    private async Task<ChatSession> ResolveSessionAsync(
+        int userId, Guid? sessionId, int? projectId, CancellationToken ct)
     {
         if (sessionId is null)
         {
+            int? resolvedProjectId = null;
+
+            if (projectId is { } wantedProjectId)
+            {
+                Project project = await db.Projects.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.ProjectId == wantedProjectId && !p.IsDeleted, ct)
+                    ?? throw AppException.NotFound("Project not found");
+
+                bool isAdmin = httpContextAccessor.HttpContext?.User.IsInRole(UserRoles.Admin) ?? false;
+                if (project.OwnerUserId != userId && !isAdmin && !project.IsShared)
+                {
+                    throw AppException.Forbidden("This project has not been shared with you");
+                }
+
+                resolvedProjectId = project.ProjectId;
+            }
+
             var created = new ChatSession
             {
                 SessionId = Guid.NewGuid(),
                 UserId = userId,
                 Title = "New conversation",
+                ProjectId = resolvedProjectId,
                 CreatedAt = DateTime.Now,
                 UpdatedAt = DateTime.Now,
             };
@@ -380,8 +402,17 @@ public class ChatService(
     /// Attachments for every turn in the window are read from disk and resent so follow-up
     /// questions about the same document work — prompt caching in ClaudeClient keeps that cheap.
     /// </summary>
-    private async Task<List<ChatTurn>> BuildHistoryAsync(Guid sessionId, CancellationToken ct)
+    private async Task<List<ChatTurn>> BuildHistoryAsync(
+        Guid sessionId, int? projectId, CancellationToken ct)
     {
+        // Project reference files are resent as a synthetic leading turn pair — the same
+        // TurnAttachment mechanism every provider already handles for a message's own
+        // attachments, so no provider-specific code was needed to support this. They ride ahead
+        // of the real history so the model has read them before the first real question, and are
+        // resent every call the same way a chat attachment is (prompt caching already covers the
+        // cost of that — see README 6.2).
+        List<ChatTurn> projectTurns = await BuildProjectContextTurnsAsync(projectId, ct);
+
         List<ChatMessage> recent = await db.ChatMessages
             .AsNoTracking()
             .Where(m => m.SessionId == sessionId && !m.IsBlocked && m.MessageRole != MessageRoles.System)
@@ -449,7 +480,65 @@ public class ChatService(
             turns.Add(new ChatTurn(message.MessageRole, message.Content, turnFiles));
         }
 
-        return turns;
+        return [.. projectTurns, .. turns];
+    }
+
+    /// <summary>
+    /// Builds the leading turn pair carrying a project's reference files, or an empty list when
+    /// the session has no project or the project has no files yet.
+    ///
+    /// A user turn holding the files, followed by a short assistant acknowledgement, keeps the
+    /// provider's "must start with a user turn" rule satisfied even though nothing has been asked
+    /// yet — the real first question still arrives as its own later user turn.
+    /// </summary>
+    private async Task<List<ChatTurn>> BuildProjectContextTurnsAsync(int? projectId, CancellationToken ct)
+    {
+        if (projectId is not { } id)
+        {
+            return [];
+        }
+
+        List<ProjectFile> files = await db.ProjectFiles
+            .AsNoTracking()
+            .Where(f => f.ProjectId == id)
+            .OrderBy(f => f.ProjectFileId)
+            .ToListAsync(ct);
+
+        if (files.Count == 0)
+        {
+            return [];
+        }
+
+        var turnFiles = new List<TurnAttachment>();
+
+        foreach (ProjectFile file in files)
+        {
+            try
+            {
+                byte[] bytes = await attachments.ReadAsync(file.StoredPath, ct);
+                turnFiles.Add(new TurnAttachment(
+                    file.FileName, file.ContentType, file.FileKind, bytes,
+                    attachments.ExtractText(file.FileKind, bytes, file.FileName)));
+            }
+            catch (Exception ex)
+            {
+                // เหมือนไฟล์แนบระดับข้อความ — ไฟล์หายจาก disk ไม่ควรทำให้แชททั้ง Project ใช้ไม่ได้
+                logger.LogWarning(ex,
+                    "Failed to read project file {ProjectFileId} ({Path}) — it was not sent to the AI",
+                    file.ProjectFileId, file.StoredPath);
+            }
+        }
+
+        if (turnFiles.Count == 0)
+        {
+            return [];
+        }
+
+        return
+        [
+            new ChatTurn(MessageRoles.User, "Reference materials for this project are attached below.", turnFiles),
+            new ChatTurn(MessageRoles.Assistant, "Understood — I have the project's reference files as context."),
+        ];
     }
 
     /// <summary>
@@ -673,6 +762,29 @@ public class ChatService(
             .FirstOrDefaultAsync(ct);
 
         return ChatModes.Normalise(lastUsed);
+    }
+
+    private async Task<string> BuildSystemPromptAsync(
+        AppUser user, string mode, int? projectId, CancellationToken ct)
+    {
+        string template = BuildSystemPrompt(user, mode);
+
+        if (projectId is { } id)
+        {
+            string? instructions = await db.Projects.AsNoTracking()
+                .Where(p => p.ProjectId == id)
+                .Select(p => p.Instructions)
+                .FirstOrDefaultAsync(ct);
+
+            if (!string.IsNullOrWhiteSpace(instructions))
+            {
+                // ต่อท้ายเหมือนกับ Chart/Report prompt — คำสั่งของ Project เป็นบริบทเพิ่มเติม
+                // ไม่ใช่แทนที่ system prompt เดิม
+                template = string.Join("\n\n", template, $"Project instructions: {instructions}");
+            }
+        }
+
+        return template;
     }
 
     private string BuildSystemPrompt(AppUser user, string mode)

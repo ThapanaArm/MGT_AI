@@ -27,6 +27,12 @@ export default function Layout() {
         <NavLink to="/chat" className="nav-link">
           Chat with AI
         </NavLink>
+        <NavLink to="/projects" className="nav-link">
+          Projects
+        </NavLink>
+        <NavLink to="/skills" className="nav-link">
+          Skills
+        </NavLink>
 
         {canReadLogs && (
           <>
