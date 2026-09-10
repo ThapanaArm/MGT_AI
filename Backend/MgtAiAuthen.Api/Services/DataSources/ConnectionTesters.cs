@@ -101,8 +101,9 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
         }
 
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var request = new HttpRequestMessage(ResolveMethod(config), uri);
         ApplyAuth(request, authType, config, secret);
+        request.Content = BuildBody(config);
 
         try
         {
@@ -129,6 +130,25 @@ public class ApiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSo
         {
             return new DataSourceTestResult(false, $"Could not reach {uri.Host}: {ex.Message}", DateTime.Now);
         }
+    }
+
+    /// <summary>Blank/missing "method" = GET, so every source registered before this field existed is unaffected.</summary>
+    internal static HttpMethod ResolveMethod(Dictionary<string, string> config)
+        => string.Equals(config.GetValueOrDefault("method", ""), "POST", StringComparison.OrdinalIgnoreCase)
+            ? HttpMethod.Post
+            : HttpMethod.Get;
+
+    /// <summary>
+    /// "requestBody" is only meaningful for POST — sent as-is (the admin types raw JSON, or
+    /// whatever the target endpoint expects) with an application/json content type. A GET never
+    /// carries a body, even if one was typed in and the method was switched back afterwards.
+    /// </summary>
+    internal static HttpContent? BuildBody(Dictionary<string, string> config)
+    {
+        if (ResolveMethod(config) != HttpMethod.Post) return null;
+
+        string body = config.GetValueOrDefault("requestBody", "");
+        return body.Length == 0 ? null : new StringContent(body, Encoding.UTF8, "application/json");
     }
 
     /// <summary>

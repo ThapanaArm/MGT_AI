@@ -189,8 +189,9 @@ public class ApiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetch
         }
 
         HttpClient http = httpClientFactory.CreateClient(ApiConnectionTester.HttpClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var request = new HttpRequestMessage(ApiConnectionTester.ResolveMethod(config), uri);
         ApiConnectionTester.ApplyAuth(request, authType, config, secret);
+        request.Content = ApiConnectionTester.BuildBody(config);
 
         try
         {

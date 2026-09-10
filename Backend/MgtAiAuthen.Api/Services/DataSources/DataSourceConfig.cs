@@ -77,6 +77,14 @@ public static class DataSourceConfig
             {
                 throw new AppException("authType Basic requires a \"username\" setting (the password goes in Secret)");
             }
+
+            // Blank = GET, kept as the default so every source registered before this field
+            // existed keeps behaving exactly as it did.
+            string method = config.GetValueOrDefault("method", "");
+            if (method.Length > 0 && !new[] { "GET", "POST" }.Contains(method, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new AppException("method must be GET or POST");
+            }
         }
     }
 }

@@ -1053,7 +1053,7 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 | ชนิด | ดึงอะไร |
 |---|---|
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | อ่านไฟล์ `.txt/.csv/.md/.json/.log/.xlsx/.xls` ทุกไฟล์ใต้ path ที่ตั้งไว้ (หรือใต้ path ย่อยตาม scope filter) แปลงเป็นข้อความต่อกัน — Excel ใช้ตัวแปลงเดียวกับไฟล์แนบในแชท |
-| **API** | ยิง GET ไปที่ `baseUrl` ด้วย auth ที่ตั้งไว้ (เหมือนตอน Test connection) ต่อ scope filter เป็น query string ท้าย URL แล้วส่ง response body ทั้งก้อนเป็นข้อความให้ AI |
+| **API** | ยิงตาม `method` ที่ตั้งไว้ (`GET` ค่าเริ่มต้น หรือ `POST` พร้อม `requestBody`) ไปที่ `baseUrl` ด้วย auth ที่ตั้งไว้ (เหมือนตอน Test connection) ต่อ scope filter เป็น query string ท้าย URL แล้วส่ง response body ทั้งก้อนเป็นข้อความให้ AI |
 | **SharePoint** | sign-in แบบ client-credentials เดียวกับ Test connection แล้วเรียก Microsoft Graph ไล่อ่านไฟล์ในไลบรารีเอกสารของไซต์ (หรือใต้โฟลเดอร์ย่อยตาม scope filter) |
 | **Data Lake / Lakehouse** | ยังไม่มี connector — บทสนทนาที่เลือกแหล่งนี้จะเห็นข้อความสถานะบอกตรง ๆ ว่ายังดึงอะไรไม่ได้ ไม่ใช่ความผิดพลาดเงียบ ๆ |
 

@@ -16,11 +16,19 @@ const CONFIG_FIELDS = {
   Api: [
     { key: 'baseUrl', label: 'Base URL', placeholder: 'https://api.example.com' },
     {
+      key: 'method', label: 'HTTP method', type: 'select',
+      options: ['GET', 'POST'], default: 'GET',
+    },
+    {
       key: 'authType', label: 'Auth type', type: 'select',
       options: ['None', 'ApiKey', 'Bearer', 'Basic'],
     },
     { key: 'apiKeyHeader', label: 'API key header (if Auth type = ApiKey)', placeholder: 'X-API-Key' },
     { key: 'username', label: 'Username (if Auth type = Basic)' },
+    {
+      key: 'requestBody', label: 'Request body (if HTTP method = POST)', type: 'textarea',
+      placeholder: '{ "example": "raw JSON sent as-is, ignored for GET" }',
+    },
   ],
   DataLake: [
     { key: 'platform', label: 'Platform (not yet connected — planning note only)', placeholder: 'Databricks / Microsoft Fabric / …' },
@@ -234,12 +242,20 @@ export default function DataSourcesPage() {
               {f.type === 'select' ? (
                 <select
                   id={`cfg-${f.key}`}
-                  value={form.config[f.key] ?? ''}
+                  value={form.config[f.key] ?? f.default ?? ''}
                   onChange={(e) => patchConfig(f.key, e.target.value)}
                 >
                   <option value="">—</option>
                   {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
+              ) : f.type === 'textarea' ? (
+                <textarea
+                  id={`cfg-${f.key}`}
+                  rows={4}
+                  value={form.config[f.key] ?? ''}
+                  onChange={(e) => patchConfig(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                />
               ) : (
                 <input
                   id={`cfg-${f.key}`}
