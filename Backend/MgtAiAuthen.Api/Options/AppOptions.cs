@@ -64,6 +64,14 @@ public class ClaudeOptions
     /// Blank disables charting without touching the other prompts.
     /// </summary>
     public string ChartSystemPrompt { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Appended like <see cref="ChartSystemPrompt"/> — a Markdown table (the frontend renders it
+    /// as a real HTML table) should never be the whole answer on its own; this asks for a short
+    /// summary or recommendation alongside it. Blank disables the instruction without touching
+    /// the other prompts.
+    /// </summary>
+    public string TableSystemPrompt { get; set; } = string.Empty;
 }
 
 /// <summary>
