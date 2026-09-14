@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
@@ -7,9 +8,17 @@ const ROLE_LABELS = {
   User: 'Employee',
 };
 
+/** Initials for the avatar circle — "Somchai Jaidee" -> "SJ", a single name -> its first letter. */
+function initialsOf(fullName) {
+  if (!fullName) return '?';
+  const parts = fullName.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
+}
+
 export default function Layout() {
   const { user, role, canReadLogs, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   async function handleLogout() {
     await logout();
@@ -20,18 +29,28 @@ export default function Layout() {
     <div className="app-shell">
       <nav className="sidebar">
         <div className="sidebar-brand">
-          MGT AI Assistant
-          <small>Internal AI assistant</small>
+          <span className="sidebar-brand-icon" aria-hidden="true">✨</span>
+          <span>
+            MGT AI Assistant
+            <small>Your workplace AI assistant</small>
+          </span>
         </div>
 
-        <NavLink to="/chat" className="nav-link">
-          Chat with AI
+        {/* A changing query value guarantees a location change even when already on /chat,
+            so ChatPage's effect (which watches for ?new=) always fires and resets the view —
+            a plain "/chat" link would be a no-op click while already on that exact route. */}
+        <NavLink to={`/chat?new=${Date.now()}`} className="btn sidebar-new-chat">
+          + New chat
+        </NavLink>
+
+        <NavLink to="/chat" className="nav-link" end>
+          <span className="nav-icon" aria-hidden="true">💬</span> Chat with AI
         </NavLink>
         <NavLink to="/projects" className="nav-link">
-          Projects
+          <span className="nav-icon" aria-hidden="true">📁</span> Projects
         </NavLink>
         <NavLink to="/skills" className="nav-link">
-          Skills
+          <span className="nav-icon" aria-hidden="true">📚</span> Prompt library
         </NavLink>
 
         {canReadLogs && (
@@ -71,19 +90,41 @@ export default function Layout() {
         )}
 
         <div className="sidebar-footer">
-          <div className="sidebar-user">{user?.fullName}</div>
-          <div className="sidebar-meta">
-            {user?.username} · {ROLE_LABELS[role] ?? role}
-            {user?.department ? ` · ${user.department}` : ''}
-          </div>
-          <div className="row-actions">
-            <NavLink to="/change-password" className="btn btn-secondary btn-sm">
-              Change password
-            </NavLink>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={handleLogout}>
-              Sign out
-            </button>
-          </div>
+          <button
+            type="button"
+            className="nav-link sidebar-help"
+            title="Contact your IT administrator for help with this assistant"
+          >
+            <span className="nav-icon" aria-hidden="true">❓</span> Help center
+          </button>
+
+          <button
+            type="button"
+            className="sidebar-user-row"
+            onClick={() => setShowUserMenu((v) => !v)}
+            aria-expanded={showUserMenu}
+          >
+            <span className="sidebar-avatar" aria-hidden="true">{initialsOf(user?.fullName)}</span>
+            <span className="sidebar-user">{user?.fullName}</span>
+            <span className={`sidebar-user-chevron${showUserMenu ? ' open' : ''}`} aria-hidden="true">▾</span>
+          </button>
+
+          {showUserMenu && (
+            <div className="sidebar-user-menu">
+              <div className="sidebar-meta">
+                {user?.username} · {ROLE_LABELS[role] ?? role}
+                {user?.department ? ` · ${user.department}` : ''}
+              </div>
+              <div className="row-actions">
+                <NavLink to="/change-password" className="btn btn-secondary btn-sm">
+                  Change password
+                </NavLink>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={handleLogout}>
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 

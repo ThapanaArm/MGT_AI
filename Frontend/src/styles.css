@@ -192,12 +192,35 @@ textarea {
 }
 
 .sidebar-brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
   color: #fff;
   padding: 0 8px 14px;
   border-bottom: 1px solid #24334a;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.sidebar-brand-icon {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.sidebar-new-chat {
+  display: block;
+  width: 100%;
+  text-align: center;
+  text-decoration: none;
+  margin-bottom: 10px;
+}
+
+.nav-icon {
+  display: inline-block;
+  width: 18px;
+  text-align: center;
+  margin-right: 2px;
 }
 
 .sidebar-brand small {
@@ -243,15 +266,81 @@ textarea {
   font-size: 13px;
 }
 
+.sidebar-help {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  margin-bottom: 6px;
+  cursor: help;
+}
+
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.sidebar-user-row:hover {
+  background: var(--sidebar-hover);
+}
+
+.sidebar-avatar {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--brand);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .sidebar-user {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
   color: #fff;
   font-weight: 500;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-user-chevron {
+  flex-shrink: 0;
+  color: #94a3b8;
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+
+.sidebar-user-chevron.open {
+  transform: rotate(180deg);
+}
+
+.sidebar-user-menu {
+  padding: 8px;
+  margin-top: 2px;
+  border-radius: 6px;
+  background: #1e293b;
 }
 
 .sidebar-meta {
   color: #94a3b8;
   font-size: 12px;
-  margin-bottom: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 8px;
 }
 
 .main {
@@ -620,53 +709,98 @@ tbody tr:last-child td {
   min-height: 0;
 }
 
+/* บับเบิลที่ merges กับ sidebar หลัก — พื้นหลังสีเดียวกัน ไม่มีเส้นคั่น เพื่อให้อ่านเป็น
+   panel เดียวต่อเนื่องกัน ตามสไตล์ mockup */
 .chat-sessions {
   width: 260px;
   flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--sidebar);
   display: flex;
   flex-direction: column;
+  padding: 10px;
 }
 
-.chat-sessions-head {
-  padding: 14px;
-  border-bottom: 1px solid var(--border);
+.chat-sessions-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  margin-bottom: 4px;
+  border: 1px solid #24334a;
+  border-radius: 999px;
+  background: #1e293b;
 }
 
-.chat-sessions-head .btn {
-  width: 100%;
+.chat-sessions-search-icon {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.chat-sessions-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: #e2e8f0;
+  font-size: 13px;
+  padding: 0;
+}
+
+.chat-sessions-search input::placeholder {
+  color: #64748b;
+}
+
+.chat-sessions-search input:focus {
+  outline: none;
+}
+
+.chat-sessions-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+  padding: 12px 10px 6px;
 }
 
 .chat-session-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .chat-session {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
   border: 1px solid transparent;
 }
 
+.chat-session-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+  opacity: 0.8;
+  margin-top: 1px;
+}
+
 .chat-session:hover {
-  background: var(--surface-2);
+  background: var(--sidebar-hover);
 }
 
 .chat-session.active {
-  background: var(--brand-light);
-  border-color: #99f6e4;
+  background: var(--sidebar-hover);
+  border-color: var(--brand);
 }
 
 .chat-session-title {
   flex: 1;
   min-width: 0;
   font-size: 13px;
+  color: #e2e8f0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -674,20 +808,28 @@ tbody tr:last-child td {
 
 .chat-session-meta {
   font-size: 11px;
-  color: var(--text-faint);
+  color: #64748b;
 }
 
+/* ปุ่มลบซ่อนไว้จนกว่าจะ hover/focus แถวนั้น — ลดความรกตาม mockup ที่ใช้เมนู "..." แบบเนียน */
 .chat-session-delete {
   background: none;
   border: none;
-  color: var(--text-faint);
+  color: #64748b;
   font-size: 15px;
   line-height: 1;
   padding: 0 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.chat-session:hover .chat-session-delete,
+.chat-session:focus-within .chat-session-delete {
+  opacity: 1;
 }
 
 .chat-session-delete:hover {
-  color: var(--danger);
+  color: #f87171;
 }
 
 .chat-main {
@@ -696,6 +838,69 @@ tbody tr:last-child td {
   display: flex;
   flex-direction: column;
   position: relative;
+}
+
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.chat-topbar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.chat-source-pill select {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chat-source-pill select:focus {
+  outline: none;
+}
+
+.chat-topbar-help {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
+
+.chat-topbar-help:hover {
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 /* ---------------------------------------------- ลากไฟล์มาวาง */
@@ -1033,11 +1238,47 @@ tbody tr:last-child td {
   color: var(--text-muted);
 }
 
-.attach-btn {
-  padding: 8px 12px;
-  font-size: 16px;
+.composer-pill {
+  padding: 6px 12px;
+  font-size: 13px;
   line-height: 1;
-  align-self: stretch;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.composer-pill:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--text);
+}
+
+.composer-pill select {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.composer-pill select:focus {
+  outline: none;
+}
+
+.composer-pill-label {
+  font-weight: 500;
+}
+
+/* บนจอแคบ ตัดเหลือแค่ไอคอนเหมือนเดิม กันแถวควบคุมล้นกว้างเกินไป */
+@media (max-width: 640px) {
+  .composer-pill-label {
+    display: none;
+  }
 }
 
 .file-list {
@@ -1057,37 +1298,102 @@ tbody tr:last-child td {
 
 .chat-welcome {
   margin: auto;
-  max-width: 520px;
+  max-width: 620px;
   text-align: center;
   color: var(--text-muted);
 }
 
+.chat-welcome-icon {
+  font-size: 34px;
+  margin-bottom: 10px;
+}
+
 .chat-welcome h2 {
-  font-size: 18px;
+  font-size: 24px;
   color: var(--text);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-welcome-footnote {
+  margin-top: 24px;
+  font-size: 12px;
+  color: var(--text-faint);
 }
 
 .chat-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  justify-content: center;
-  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 26px;
+  text-align: left;
 }
 
-.chat-suggestion {
-  padding: 7px 13px;
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
+.chat-suggestion-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   background: var(--surface);
-  font-size: 13px;
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.chat-suggestion-card:hover {
+  border-color: var(--brand);
+}
+
+.chat-suggestion-icon {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  background: var(--brand-light);
+}
+
+.chat-suggestion-icon.tone-info {
+  background: var(--info-bg);
+}
+
+.chat-suggestion-icon.tone-violet {
+  background: #ede9fe;
+}
+
+.chat-suggestion-icon.tone-warn {
+  background: var(--warn-bg);
+}
+
+.chat-suggestion-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-suggestion-text strong {
+  font-size: 14px;
   color: var(--text);
 }
 
-.chat-suggestion:hover {
-  border-color: var(--brand);
-  color: var(--brand-dark);
+.chat-suggestion-text .faint {
+  font-size: 12px;
+}
+
+.chat-suggestion-arrow {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 18px;
+}
+
+@media (max-width: 640px) {
+  .chat-suggestions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .msg {
@@ -1149,19 +1455,74 @@ tbody tr:last-child td {
 .chat-composer-row {
   display: flex;
   gap: 10px;
-  align-items: flex-end;
+  align-items: center;
 }
 
-.chat-composer textarea {
+/* กล่องมนใบเดียว — ช่องพิมพ์เป็นแถวบน แถวควบคุม (แนบไฟล์/แหล่งข้อมูล/prompt) อยู่ใต้มันในกล่องเดียวกัน
+   ตามแบบ mockup แทนที่จะเรียงปุ่มไว้ข้างช่องพิมพ์ */
+.chat-composer-card {
   flex: 1;
-  min-height: 46px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 10px 14px 10px;
+}
+
+.chat-composer-card textarea {
+  width: 100%;
+  border: none;
+  padding: 4px 0;
+  min-height: 24px;
   max-height: 180px;
+  resize: none;
+}
+
+.chat-composer-card textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.chat-composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.chat-send-btn {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
 }
 
 .chat-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-top: 8px;
+  justify-content: center;
+}
+
+.chat-hint-info {
+  cursor: help;
+}
+
+.chat-footnote {
+  padding: 8px 20px 14px;
+  text-align: center;
   font-size: 11px;
   color: var(--text-faint);
-  margin-top: 6px;
+  background: var(--surface);
 }
 
 .typing {
@@ -1265,6 +1626,7 @@ tbody tr:last-child td {
   }
 
   .sidebar-footer {
+    position: relative;
     margin: 0 0 0 auto;
     padding: 0;
     border: none;
@@ -1275,6 +1637,22 @@ tbody tr:last-child td {
 
   .sidebar-meta {
     display: none;
+  }
+
+  .sidebar-help {
+    display: none;
+  }
+
+  .sidebar-user-row {
+    width: auto;
+  }
+
+  .sidebar-user-menu {
+    position: absolute;
+    top: 100%;
+    right: 10px;
+    z-index: 20;
+    box-shadow: var(--shadow);
   }
 
   .chat-sessions {

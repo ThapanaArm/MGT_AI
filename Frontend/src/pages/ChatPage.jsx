@@ -24,10 +24,26 @@ const EXPORT_FORMATS = [
 ];
 
 const SUGGESTIONS = [
-  'How does INCOTERMS 2020 differ from the 2010 edition?',
-  'What are the steps to create a Sales Order?',
-  'Where is the main warehouse located?',
-  'Why is a Safety Data Sheet required?',
+  {
+    icon: '🔍', tone: 'brand', title: 'Search company knowledge',
+    subtitle: 'What are the steps to create a Sales Order?',
+    prompt: 'What are the steps to create a Sales Order?',
+  },
+  {
+    icon: '📄', tone: 'info', title: 'Summarize documents',
+    subtitle: 'Extract key points from your files',
+    prompt: 'Please summarize the key points from the file I attach.',
+  },
+  {
+    icon: '⚖️', tone: 'violet', title: 'Compare information',
+    subtitle: 'INCOTERMS 2020 vs. 2010',
+    prompt: 'How does INCOTERMS 2020 differ from the 2010 edition?',
+  },
+  {
+    icon: '✏️', tone: 'warn', title: 'Draft content',
+    subtitle: 'Write an email for work',
+    prompt: 'Please draft a professional email for work — I will tell you the topic.',
+  },
 ];
 
 /** Guess the kind from the extension — only for the icon/label before upload; the server decides. */
@@ -63,6 +79,7 @@ export default function ChatPage() {
   const [selectedDataSourceId, setSelectedDataSourceId] = useState(null);
   const [dataSourceStatus, setDataSourceStatus] = useState(null);
   const [refreshingDataSource, setRefreshingDataSource] = useState(false);
+  const [sessionSearch, setSessionSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const bottomRef = useRef(null);
@@ -82,15 +99,25 @@ export default function ChatPage() {
     api('/api/projects').then(setProjects).catch(() => setProjects([]));
     api('/api/skills').then(setSkills).catch(() => setSkills([]));
     api('/api/chat/data-sources').then(setDataSourceOptions).catch(() => setDataSourceOptions([]));
-
-    const fromUrl = searchParams.get('project');
-    if (fromUrl) {
-      setActiveSessionId(null);
-      setSelectedProjectId(Number(fromUrl));
-      setSearchParams({}, { replace: true });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reactive (not mount-only): the sidebar's "+ New chat" link changes ?new= even while already
+  // on /chat, which does not remount this page — only a searchParams-watching effect catches that.
+  useEffect(() => {
+    const projectParam = searchParams.get('project');
+    const isNew = searchParams.get('new');
+    if (!projectParam && !isNew) return;
+
+    setActiveSessionId(null);
+    setSelectedDataSourceId(null);
+    setSelectedProjectId(projectParam ? Number(projectParam) : null);
+    setNotice(null);
+    setError(null);
+    setPending([]);
+    if (isNew) setDraft('');
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     loadSessions();
@@ -368,6 +395,11 @@ export default function ChatPage() {
 
   const totalPendingMb = pending.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
   const selectedModel = models.find((m) => m.name === model);
+  const activeSession = sessions.find((s) => s.sessionId === activeSessionId);
+
+  const filteredSessions = sessionSearch.trim()
+    ? sessions.filter((s) => s.title.toLowerCase().includes(sessionSearch.trim().toLowerCase()))
+    : sessions;
 
   // Group the picker by vendor. With two providers a flat list makes it hard to see which
   // account a model bills to — and that is the thing a user needs to know before sending.
@@ -380,27 +412,25 @@ export default function ChatPage() {
   return (
     <div className="chat-layout">
       <aside className="chat-sessions">
-        <div className="chat-sessions-head">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setActiveSessionId(null);
-              setSelectedProjectId(null);
-              setSelectedDataSourceId(null);
-              setNotice(null);
-              setError(null);
-              setPending([]);
-            }}
-          >
-            + New conversation
-          </button>
+        <div className="chat-sessions-search">
+          <span className="chat-sessions-search-icon" aria-hidden="true">🔎</span>
+          <input
+            type="search"
+            placeholder="Search conversations"
+            value={sessionSearch}
+            onChange={(e) => setSessionSearch(e.target.value)}
+          />
         </div>
+
+        <div className="chat-sessions-label">Recent</div>
 
         <div className="chat-session-list">
           {sessions.length === 0 && <div className="empty">No conversations yet</div>}
+          {sessions.length > 0 && filteredSessions.length === 0 && (
+            <div className="empty">No conversations match "{sessionSearch}"</div>
+          )}
 
-          {sessions.map((session) => (
+          {filteredSessions.map((session) => (
             <div
               key={session.sessionId}
               className={`chat-session${session.sessionId === activeSessionId ? ' active' : ''}`}
@@ -409,6 +439,7 @@ export default function ChatPage() {
               tabIndex={0}
               onKeyDown={(e) => e.key === 'Enter' && setActiveSessionId(session.sessionId)}
             >
+              <span className="chat-session-icon" aria-hidden="true">💬</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="chat-session-title">
                   {session.projectName && <span className="badge badge-brand" style={{ marginRight: 6 }}>{session.projectName}</span>}
@@ -439,6 +470,35 @@ export default function ChatPage() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        <div className="chat-topbar">
+          <div className="chat-topbar-title">{activeSession?.title ?? 'New chat'}</div>
+
+          {/* Read-only here — the composer below is where this is actually picked, so there is
+              only ever one interactive control for it (see chat-composer-controls). */}
+          {!activeSessionId ? (
+            <span className="chat-source-pill">
+              <span aria-hidden="true">🗄️</span> Source:{' '}
+              {selectedDataSourceId
+                ? dataSourceOptions.find((s) => s.sourceId === selectedDataSourceId)?.sourceName
+                : 'none'}
+            </span>
+          ) : dataSourceStatus ? (
+            <span className="chat-source-pill" title={dataSourceStatus.message}>
+              <span aria-hidden="true">🗄️</span> Source: {dataSourceStatus.sourceName}
+            </span>
+          ) : (
+            <span />
+          )}
+
+          <button
+            type="button"
+            className="chat-topbar-help"
+            title="Attach files, pick a Project or Data source before your first message, choose a model, and export any answer as a report."
+          >
+            ?
+          </button>
+        </div>
+
         {dragging && (
           <div className="drop-overlay">
             <div className="drop-overlay-inner">
@@ -486,24 +546,33 @@ export default function ChatPage() {
 
           {messages.length === 0 && !sending && (
             <div className="chat-welcome">
-              <h2>Ask anything to get started</h2>
-              <p>
+              <div className="chat-welcome-icon" aria-hidden="true">✨</div>
+              <h2>How can I help you today?</h2>
+              <p>Find answers, summarize documents, and simplify your work.</p>
+
+              <div className="chat-suggestions">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s.title}
+                    type="button"
+                    className="chat-suggestion-card"
+                    onClick={() => setDraft(s.prompt)}
+                  >
+                    <span className={`chat-suggestion-icon tone-${s.tone}`} aria-hidden="true">{s.icon}</span>
+                    <span className="chat-suggestion-text">
+                      <strong>{s.title}</strong>
+                      <span className="faint">{s.subtitle}</span>
+                    </span>
+                    <span className="chat-suggestion-arrow" aria-hidden="true">›</span>
+                  </button>
+                ))}
+              </div>
+
+              <p className="chat-welcome-footnote">
                 Drag files onto this page to have the AI analyse them. Every question and
                 attachment is logged with the sender and timestamp, and screened against company
                 data policy before it reaches the AI.
               </p>
-              <div className="chat-suggestions">
-                {SUGGESTIONS.map((text) => (
-                  <button
-                    key={text}
-                    type="button"
-                    className="chat-suggestion"
-                    onClick={() => setDraft(text)}
-                  >
-                    {text}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
 
@@ -653,27 +722,6 @@ export default function ChatPage() {
                 </>
               )}
 
-              {!activeSessionId && dataSourceOptions.length > 0 && (
-                <>
-                  <label htmlFor="data-source" style={{ margin: 0 }}>
-                    Data source
-                  </label>
-                  <select
-                    id="data-source"
-                    value={selectedDataSourceId ?? ''}
-                    onChange={(e) => setSelectedDataSourceId(e.target.value ? Number(e.target.value) : null)}
-                    disabled={sending}
-                  >
-                    <option value="">No data source</option>
-                    {dataSourceOptions.map((s) => (
-                      <option key={s.sourceId} value={s.sourceId}>
-                        {s.sourceName} ({s.sourceType})
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
-
               <label htmlFor="model" style={{ margin: 0 }}>
                 Model
               </label>
@@ -752,71 +800,118 @@ export default function ChatPage() {
                 e.target.value = '';
               }}
             />
-            <button
-              type="button"
-              className="btn btn-secondary attach-btn"
-              title="Attach files"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={sending}
-            >
-              📎
-            </button>
 
-            {skills.length > 0 && (
-              <div className="skills-picker">
+            <div className="chat-composer-card">
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder={mode === 'Code'
+                  ? 'Describe what to build, paste code to review, or drop a file…'
+                  : 'Ask a question or attach a file to analyze…'}
+                rows={1}
+                disabled={sending}
+              />
+
+              <div className="chat-composer-controls">
                 <button
                   type="button"
-                  className="btn btn-secondary attach-btn"
-                  title="Insert a saved skill"
-                  onClick={() => setShowSkills((v) => !v)}
+                  className="composer-pill"
+                  title="Attach files"
+                  onClick={() => fileInputRef.current?.click()}
                   disabled={sending}
                 >
-                  ⚡
+                  📎 <span className="composer-pill-label">Attach files</span>
                 </button>
-                {showSkills && (
-                  <div className="skills-popover">
-                    {skills.map((s) => (
-                      <button
-                        key={s.skillId}
-                        type="button"
-                        className="skills-popover-item"
-                        title={s.body}
-                        onClick={() => {
-                          setDraft((prev) => (prev.trim() ? [prev, s.body].join(NEWLINE_GAP) : s.body));
-                          setShowSkills(false);
-                        }}
+
+                {dataSourceOptions.length > 0 && (
+                  !activeSessionId ? (
+                    <label
+                      className="composer-pill"
+                      title="Pull real data from a granted Data Source into this conversation"
+                    >
+                      <span aria-hidden="true">🗄️</span>
+                      <select
+                        value={selectedDataSourceId ?? ''}
+                        onChange={(e) => setSelectedDataSourceId(e.target.value ? Number(e.target.value) : null)}
+                        disabled={sending}
                       >
-                        {s.name}
-                        {!s.canEdit && <span className="faint"> (shared)</span>}
-                      </button>
-                    ))}
+                        <option value="">Company data: none</option>
+                        {dataSourceOptions.map((s) => (
+                          <option key={s.sourceId} value={s.sourceId}>{s.sourceName}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : dataSourceStatus ? (
+                    <span className="composer-pill" title={dataSourceStatus.message}>
+                      <span aria-hidden="true">🗄️</span> {dataSourceStatus.sourceName}
+                    </span>
+                  ) : null
+                )}
+
+                {skills.length > 0 && (
+                  <div className="skills-picker">
+                    <button
+                      type="button"
+                      className="composer-pill"
+                      title="Insert a prompt from your library"
+                      onClick={() => setShowSkills((v) => !v)}
+                      disabled={sending}
+                    >
+                      ⚡ <span className="composer-pill-label">Prompt library</span>
+                    </button>
+                    {showSkills && (
+                      <div className="skills-popover">
+                        {skills.map((s) => (
+                          <button
+                            key={s.skillId}
+                            type="button"
+                            className="skills-popover-item"
+                            title={s.body}
+                            onClick={() => {
+                              setDraft((prev) => (prev.trim() ? [prev, s.body].join(NEWLINE_GAP) : s.body));
+                              setShowSkills(false);
+                            }}
+                          >
+                            {s.name}
+                            {!s.canEdit && <span className="faint"> (shared)</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
+            </div>
 
-            <textarea
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={mode === 'Code'
-                ? 'Describe what to build, paste code to review, or drop a file… (Enter to send, Shift+Enter for a new line)'
-                : 'Type a question, or drag and drop files onto this page… (Enter to send, Shift+Enter for a new line)'}
-              rows={2}
-              disabled={sending}
-            />
-            <button type="submit" className="btn" disabled={sending || (!draft.trim() && pending.length === 0)}>
-              {sending ? 'Sending…' : 'Send'}
+            <button
+              type="submit"
+              className="btn chat-send-btn"
+              title="Send"
+              disabled={sending || (!draft.trim() && pending.length === 0)}
+            >
+              {sending ? '…' : '➤'}
             </button>
           </div>
 
           <div className="chat-hint">
-            Never type or attach passwords, national ID numbers, or company secrets — messages and
-            text files that match a rule are blocked and logged.
-            {limits && ` · Supported: ${limits.allowedExtensions.join(' ')}`}
+            <span
+              className="chat-hint-info"
+              aria-hidden="true"
+              title={
+                'Never type or attach passwords, national ID numbers, or company secrets — messages and ' +
+                'text files that match a rule are blocked and logged.' +
+                (limits ? ` Supported: ${limits.allowedExtensions.join(' ')}` : '')
+              }
+            >
+              ⓘ
+            </span>
+            Conversations are logged according to company policy
           </div>
         </form>
+
+        <div className="chat-footnote">AI can make mistakes. Please verify the sources.</div>
       </div>
     </div>
   );
