@@ -24,9 +24,11 @@ public static class DataSourceConfig
         [DataSourceTypes.LocalFolder] = ["path"],
         // siteUrl is the SharePoint site, e.g. https://contoso.sharepoint.com/sites/Sales
         [DataSourceTypes.SharePoint] = ["siteUrl", "tenantId", "clientId"],
-        // Deliberately empty: the platform has not been chosen yet (see DataLakeConnectionTester).
-        // Requiring fields for a connector that does not exist would just be validation theatre.
-        [DataSourceTypes.DataLake] = [],
+        // Microsoft Fabric / Power BI semantic model — datasetId is the model's GUID (from its
+        // Settings page or URL in the Fabric portal), daxQuery is the query that runs on every
+        // fetch (e.g. "EVALUATE 'Sales'"). See PowerBiConnectionTester for the two admin-side
+        // prerequisites (Entra API permission + a Fabric admin portal switch) this cannot check.
+        [DataSourceTypes.DataLake] = ["tenantId", "clientId", "datasetId", "daxQuery"],
     };
 
     /// <summary>Keys whose value never needs to reach the frontend even unmasked — currently none, but kept for symmetry with the secret column.</summary>

@@ -32,7 +32,14 @@ const CONFIG_FIELDS = {
     },
   ],
   DataLake: [
-    { key: 'platform', label: 'Platform (not yet connected — planning note only)', placeholder: 'Databricks / Microsoft Fabric / …' },
+    { key: 'tenantId', label: 'Entra ID tenant ID' },
+    { key: 'clientId', label: 'Entra ID app (client) ID' },
+    { key: 'datasetId', label: 'Dataset (semantic model) ID', placeholder: 'GUID — from the model’s Settings page in Fabric/Power BI' },
+    {
+      key: 'daxQuery', label: 'DAX query', type: 'textarea',
+      placeholder: "EVALUATE 'Sales'",
+    },
+    { key: 'timeoutMinutes', label: 'Timeout (minutes)', placeholder: '2 (default)' },
   ],
   LocalFolder: [
     { key: 'path', label: 'Folder path on the server', placeholder: 'D:\\Shared\\Sales or \\\\server\\share\\Sales' },
@@ -46,14 +53,14 @@ const CONFIG_FIELDS = {
 
 const SECRET_LABEL = {
   Api: 'API key / token / password (per Auth type above)',
-  DataLake: 'Secret (platform-specific — not used yet)',
+  DataLake: 'Client secret',
   LocalFolder: null,
   SharePoint: 'Client secret',
 };
 
 const TYPE_LABELS = {
   Api: 'API',
-  DataLake: 'Data Lake / Lakehouse',
+  DataLake: 'Data Lake / Lakehouse (Microsoft Fabric)',
   LocalFolder: 'Local / network folder',
   SharePoint: 'SharePoint',
 };
@@ -176,9 +183,10 @@ export default function DataSourcesPage() {
       <div className="page-header">
         <h1>Data source registry</h1>
         <p >
-          Register the systems employees may be given access to — an API, a Data Lake/Lakehouse, a
-          local or network folder, or a SharePoint site. This page only builds the registry and
-          decides who can read what; nothing in the chat pipeline reads from these sources yet.
+          Register the systems employees may be given access to — an API, a Microsoft Fabric /
+          Power BI semantic model, a local or network folder, or a SharePoint site. This page
+          builds the registry and decides who can read what; grant access on the "Data source
+          access" page, then employees can pull it into a chat once they have a grant.
         </p>
       </div>
 
@@ -231,9 +239,11 @@ export default function DataSourcesPage() {
 
           {form.sourceType === 'DataLake' && (
             <div className="alert alert-warn field-wide">
-              No Data Lake / Lakehouse connector is implemented yet. This entry is a placeholder
-              for planning — "Test connection" will always report that plainly rather than
-              pretending to succeed.
+              Connects to a Microsoft Fabric / Power BI semantic model via DAX. Before this will
+              work, the Entra ID app registration above needs the Power BI Service API permission
+              (e.g. Dataset.Read.All), and a Fabric admin must enable "Allow service principals to
+              use Fabric APIs" in the Fabric admin portal — ask your IT/Fabric administrator. Until
+              then, "Test connection" will report the exact 401/403 Fabric returns.
             </div>
           )}
 

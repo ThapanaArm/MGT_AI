@@ -204,7 +204,7 @@ public class ApiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetch
             if (!response.IsSuccessStatusCode)
             {
                 return new DataSourceFetchResult(false,
-                    $"{uri.Host} returned HTTP {(int)response.StatusCode}: {SharePointAuth.Truncate(body, 300)}",
+                    $"{uri.Host} returned HTTP {(int)response.StatusCode}: {EntraAuth.Truncate(body, 300)}",
                     null, 0, false);
             }
 
@@ -268,13 +268,13 @@ public class SharePointFetcher(
 
         HttpClient http = httpClientFactory.CreateClient(SharePointConnectionTester.HttpClientName);
 
-        (string? token, string? tokenError) = await SharePointAuth.AcquireTokenAsync(http, tenantId, clientId, secret, ct);
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(http, tenantId, clientId, secret, ct);
         if (token is null)
         {
             return new DataSourceFetchResult(false, tokenError!, null, 0, false);
         }
 
-        string graphPath = SharePointAuth.GraphSitePath(site);
+        string graphPath = EntraAuth.GraphSitePath(site);
         string childrenUrl = string.IsNullOrWhiteSpace(scopeFilter)
             ? $"https://graph.microsoft.com/v1.0/sites/{graphPath}/drive/root/children"
             : $"https://graph.microsoft.com/v1.0/sites/{graphPath}/drive/root:/{Uri.EscapeDataString(scopeFilter.Trim().Trim('/'))}:/children";
@@ -293,7 +293,7 @@ public class SharePointFetcher(
                 return new DataSourceFetchResult(false,
                     response.StatusCode == System.Net.HttpStatusCode.NotFound
                         ? $"No folder found at \"{scopeFilter}\" in this site's document library."
-                        : $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {SharePointAuth.Truncate(body, 200)}",
+                        : $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {EntraAuth.Truncate(body, 200)}",
                     null, 0, false);
             }
 
@@ -378,14 +378,72 @@ public class SharePointFetcher(
     }
 }
 
-/// <summary>Mirrors <see cref="DataLakeConnectionTester"/> — no platform chosen yet, so no fetch is possible.</summary>
-public class DataLakeFetcher : IDataSourceFetcher
+/// <summary>
+/// Runs a DAX query against a Power BI / Fabric semantic model and hands the raw JSON result to
+/// the AI as text — same client-credentials sign-in <see cref="PowerBiConnectionTester"/> verifies.
+/// The grant's scope filter, when present, REPLACES the source's configured query rather than
+/// appending to it (DAX has no generic "tack a filter onto any query" syntax the way a URL query
+/// string does) — an admin restricting a user writes that user's own DAX query as the filter, e.g.
+/// "EVALUATE FILTER('Sales', 'Sales'[Division] = \"North\")".
+/// </summary>
+public class PowerBiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetcher
 {
     public string SourceType => DataSourceTypes.DataLake;
 
-    public Task<DataSourceFetchResult> FetchAsync(
+    public async Task<DataSourceFetchResult> FetchAsync(
         Dictionary<string, string> config, string? secret, string? scopeFilter, CancellationToken ct)
-        => Task.FromResult(new DataSourceFetchResult(false,
-            "No Data Lake / Lakehouse connector is implemented yet — nothing can be fetched from this source.",
-            null, 0, false));
+    {
+        string tenantId = config.GetValueOrDefault("tenantId", "").Trim();
+        string clientId = config.GetValueOrDefault("clientId", "").Trim();
+        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
+        string daxQuery = string.IsNullOrWhiteSpace(scopeFilter)
+            ? config.GetValueOrDefault("daxQuery", "").Trim()
+            : scopeFilter.Trim();
+
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            return new DataSourceFetchResult(false, "No client secret is configured.", null, 0, false);
+        }
+
+        HttpClient http = httpClientFactory.CreateClient(PowerBiConnectionTester.HttpClientName);
+
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
+            http, tenantId, clientId, secret, ct, EntraAuth.PowerBiScope);
+        if (token is null)
+        {
+            return new DataSourceFetchResult(false, tokenError!, null, 0, false);
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(ApiConnectionTester.ResolveTimeout(config));
+
+        PowerBiQueryResult result;
+        try
+        {
+            result = await PowerBiQuery.ExecuteAsync(http, token, datasetId, daxQuery, timeoutCts.Token);
+        }
+        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new DataSourceFetchResult(false,
+                $"Timed out waiting for the Power BI API (after {ApiConnectionTester.ResolveTimeout(config).TotalMinutes:0.#} minute(s) — " +
+                "raise \"Timeout (minutes)\" if this query is just slow).", null, 0, false);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new DataSourceFetchResult(false, $"Could not reach the Power BI API: {ex.Message}", null, 0, false);
+        }
+
+        if (!result.Success)
+        {
+            return new DataSourceFetchResult(false, result.Message, null, 0, false);
+        }
+
+        string body = result.RawJson ?? "";
+        bool truncated = body.Length > DataSourceFetchLimits.MaxChars;
+        string content = truncated ? body[..DataSourceFetchLimits.MaxChars] : body;
+
+        return new DataSourceFetchResult(true,
+            $"Fetched {result.RowCount} row(s) from the semantic model{(truncated ? " (truncated)" : "")}.",
+            content, content.Length, truncated);
+    }
 }

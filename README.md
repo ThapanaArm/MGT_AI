@@ -963,12 +963,24 @@ Admin/IT ลงทะเบียนแหล่งข้อมูลไว้�
 | **API** | SAP OData, ระบบภายในที่มี REST API | **ได้จริง** — ยิง HTTP ไปที่ baseUrl พร้อม auth ที่ตั้งไว้ |
 | **SharePoint** | ไซต์เอกสารของแผนก | **ได้จริง** — OAuth2 client-credentials กับ Entra ID แล้วเรียก Microsoft Graph |
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | โฟลเดอร์แชร์บน server, UNC path | **ได้จริง** — ตรวจว่าโฟลเดอร์มีอยู่และเซิร์ฟเวอร์อ่านได้ |
-| **Data Lake / Lakehouse** | ยังไม่ตัดสินใจแพลตฟอร์ม | **ยังไม่มี connector** — กดทดสอบจะได้ข้อความบอกตรง ๆ ว่ายังไม่ได้ทำ ไม่ใช่ผลลัพธ์ปลอม |
+| **Data Lake / Lakehouse** | Microsoft Fabric / Power BI semantic model | **ได้จริง** — OAuth2 client-credentials กับ Entra ID (คนละ scope กับ SharePoint) แล้วรัน DAX ผ่าน Power BI REST API |
 
-**ทำไม Data Lake ถึงไม่มี connector:** ผู้ใช้ระบุไว้ตอนคุยว่า "ยังไม่มี/ยังไม่แน่ใจ" ว่าจะใช้
-แพลตฟอร์มไหน (Microsoft Fabric/OneLake vs Databricks ใช้วิธี authenticate และ SDK คนละแบบ)
-ระบบจึงเก็บได้แค่โครงไว้วางแผน กด "Test connection" แล้วได้คำตอบตรง ๆ ว่ายังไม่มีใครสร้าง
-connector — เลือกทำแบบนี้เพราะการทำ mock ให้ผ่านเฉย ๆ จะทำให้แอดมินเข้าใจผิดว่าเชื่อมต่อได้แล้ว
+**Data Lake ต่อ Microsoft Fabric แล้ว** — เมื่อแพลตฟอร์มถูกเลือกแล้ว (ผู้ใช้ใช้ Microsoft Fabric,
+เห็นได้จาก OneLake catalog ที่มี Semantic model อยู่) connector ตัวนี้ยิง DAX query ไปที่
+**Power BI REST API's Execute Queries endpoint** (`POST /v1.0/myorg/datasets/{id}/executeQueries`)
+โดยใช้ token แบบ client-credentials เดียวกับ SharePoint (คนละ `scope` — ดู `EntraAuth.PowerBiScope`
+ใน `ConnectionTesters.cs`) จึงใช้โค้ด auth ชุดเดียวกันซ้ำได้เลย
+
+ตั้งค่าที่ต้องกรอกใน registry: `tenantId`, `clientId` (Entra app), `datasetId` (GUID ของ semantic
+model — ดูได้จากหน้า Settings ของ model ใน Fabric/Power BI), `daxQuery` (คำสั่งที่จะรันทุกครั้งที่
+ดึงข้อมูล เช่น `EVALUATE 'Sales'`), และ Secret คือ client secret ของ Entra app
+
+**สองเงื่อนไขที่ระบบตรวจให้ไม่ได้ ต้องให้ IT/Fabric admin จัดการเอง:**
+1. Entra ID app registration ต้องมีสิทธิ์ Power BI Service API (เช่น `Dataset.Read.All`)
+2. Fabric admin ต้องเปิด **"Allow service principals to use Fabric APIs"** ในหน้า Fabric admin
+   portal (ทั้ง tenant หรือจำกัดเฉพาะ security group ก็ได้) — ถ้าไม่เปิด Fabric จะปฏิเสธทุก
+   client-credentials call เงียบ ๆ ด้วย 401/403 โดยไม่บอกสาเหตุ ซึ่งข้อความ error ของ connector
+   นี้จะเตือนถึงจุดนี้โดยเฉพาะเมื่อเจอ 401/403
 
 ### ขอบเขตสิทธิ์ (Scope) — ตอบสองตัวอย่างที่ผู้ใช้ให้มาโดยตรง
 
@@ -1055,7 +1067,7 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | อ่านไฟล์ `.txt/.csv/.md/.json/.log/.xlsx/.xls` ทุกไฟล์ใต้ path ที่ตั้งไว้ (หรือใต้ path ย่อยตาม scope filter) แปลงเป็นข้อความต่อกัน — Excel ใช้ตัวแปลงเดียวกับไฟล์แนบในแชท |
 | **API** | ยิงตาม `method` ที่ตั้งไว้ (`GET` ค่าเริ่มต้น หรือ `POST` พร้อม `requestBody`) ไปที่ `baseUrl` ด้วย auth ที่ตั้งไว้ (เหมือนตอน Test connection) ต่อ scope filter เป็น query string ท้าย URL แล้วส่ง response body ทั้งก้อนเป็นข้อความให้ AI |
 | **SharePoint** | sign-in แบบ client-credentials เดียวกับ Test connection แล้วเรียก Microsoft Graph ไล่อ่านไฟล์ในไลบรารีเอกสารของไซต์ (หรือใต้โฟลเดอร์ย่อยตาม scope filter) |
-| **Data Lake / Lakehouse** | ยังไม่มี connector — บทสนทนาที่เลือกแหล่งนี้จะเห็นข้อความสถานะบอกตรง ๆ ว่ายังดึงอะไรไม่ได้ ไม่ใช่ความผิดพลาดเงียบ ๆ |
+| **Data Lake / Lakehouse** | sign-in แบบ client-credentials เดียวกับ SharePoint (คนละ scope) แล้วรัน `daxQuery` ที่ตั้งไว้ผ่าน Power BI Execute Queries API ส่ง JSON ผลลัพธ์ทั้งก้อนเป็นข้อความให้ AI — scope filter (ถ้ามี) จะ**แทนที่** `daxQuery` เดิมทั้งหมด แทนที่จะต่อท้าย เพราะ DAX ไม่มีวากยสัมพันธ์ "เติม filter เข้าไปในคำสั่งเดิม" แบบ query string ของ URL |
 
 ทุกตัวมี **เพดานขนาด** กันข้อมูลก้อนใหญ่ทำให้บทสนทนาบวมเกินไป: อย่างมาก 30 ไฟล์และ
 120,000 ตัวอักษรต่อการดึงหนึ่งครั้ง (ไฟล์เดี่ยวเกิน 5 MB ถูกข้าม) เกินแล้วตัดพร้อมบอกผู้ใช้ว่า
@@ -1232,11 +1244,11 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 
 ## 11. สถานะการทดสอบ
 
-ทดสอบ backend รวม **536 เคส ผ่านทั้งหมด** แบ่งเป็น 14 ชุด: ชุดหลัก 72,
+ทดสอบ backend รวม **537 เคส ผ่านทั้งหมด** แบ่งเป็น 14 ชุด: ชุดหลัก 72,
 เงื่อนไข Keyword หลายคำ 19, บันทึก token/ค่าใช้จ่าย 37, ไฟล์แนบ 44,
 การเลือกโมเดล 13, การเลือกโมเดลกับ API จริง 18, โหมด Chat/Code 28,
 ผู้ให้บริการ Gemini 36, ผู้ให้บริการ OpenAI 29, ไฟล์ Excel 36, การทำกราฟ 34,
-การส่งออกรายงาน 52, ทะเบียนแหล่งข้อมูล 46 และการดึงข้อมูลจาก Data Source
+การส่งออกรายงาน 52, ทะเบียนแหล่งข้อมูล 47 และการดึงข้อมูลจาก Data Source
 เข้าแชทจริง (Phase 2, ข้อ 6.23) 27
 (ทุกชุดรันกับ API จริงของทั้งสามเจ้า และรันซ้ำได้โดยไม่ต้องล้างฐานข้อมูล)
 
@@ -1392,7 +1404,7 @@ labels, ค่าเป็นข้อความ, labels เยอะเกิ
   messageId ที่ไม่มีได้ 404, และ **ส่งออกข้อความของผู้ใช้เองไม่ได้** (ไม่มีอะไรให้รายงาน)
 - audit บันทึก `REPORT_EXPORTED` ครบทุกครั้ง ระบุรูปแบบ ขนาด และส่งออกของพนักงานคนไหน
 
-ชุด **ทะเบียนแหล่งข้อมูล** (46 เคส) ตรวจทั้งการลงทะเบียนและสิทธิ์:
+ชุด **ทะเบียนแหล่งข้อมูล** (47 เคส) ตรวจทั้งการลงทะเบียนและสิทธิ์:
 
 - Admin เข้าได้ User/Auditor เข้าไม่ได้ (403) — หน้านี้เปลี่ยนแปลงสิทธิ์เข้าถึง จึงเข้มกว่าหน้า log
 - **ความลับไม่เคยเป็น plain text ในฐานข้อมูล** ตรวจโดยอ่านค่าตรงจาก `DataSources.EncryptedSecret`
@@ -1400,8 +1412,9 @@ labels, ค่าเป็นข้อความ, labels เยอะเกิ
 - แก้ไขแหล่งข้อมูลแล้วเว้นช่อง secret ว่างไว้ **คงค่าเดิม** ไม่ใช่ล้างทิ้ง (ยืนยันด้วยการเทียบ
   ค่าที่เข้ารหัสก่อน-หลังตรงจากฐานข้อมูล)
 - config ที่ขาดฟิลด์บังคับ, `authType` ที่ไม่รู้จัก และชื่อซ้ำ ถูกปฏิเสธ
-- **ทดสอบเชื่อมต่อได้จริง** — โฟลเดอร์ที่มี/ไม่มีจริงบนเครื่อง, ยิง HTTP ไปที่ API ที่มีจริง/ไม่มีจริง —
-  และ **Data Lake ตอบว่ายังไม่มี connector เสมอ ไม่ใช่ผลลัพธ์ปลอม**
+- **ทดสอบเชื่อมต่อได้จริง** — โฟลเดอร์ที่มี/ไม่มีจริงบนเครื่อง, ยิง HTTP ไปที่ API ที่มีจริง/ไม่มีจริง,
+  และ **Data Lake (Fabric/Power BI) ที่ config ครบแต่ credential ปลอม ถูก Entra ID ปฏิเสธจริง**
+  (ไม่ใช่ stub ตอบ "ยังไม่มี connector" อีกต่อไป) พร้อม config ที่ขาดฟิลด์บังคับถูกปฏิเสธ 400
 - **สองเคสตัวอย่างที่ผู้ใช้ระบุไว้โดยตรง**: ให้สิทธิ์ Custom scope จำกัด endpoint (เคส CFO/SAP)
   และให้สิทธิ์ Own department ที่ผูกกับ `Users.Department` อัตโนมัติโดยไม่ต้องพิมพ์ชื่อแผนกซ้ำ
   (เคส Sales Manager) — และ **ปฏิเสธ** Own department ถ้าพนักงานยังไม่มีแผนก แทนที่จะกลายเป็น

@@ -10,9 +10,9 @@ namespace MgtAiAuthen.Api.Services.DataSources;
 /// One implementation per <see cref="DataSourceTypes"/>. Adding a fifth source type is a new
 /// class plus one DI line — the same shape as <c>IAiProvider</c> for the AI vendors.
 ///
-/// Every tester here does a real check. None of them fabricate success: a type nobody has
-/// implemented a connector for (Data Lake, until a platform is chosen) says so plainly instead of
-/// pretending the test passed.
+/// Every tester here does a real check — none fabricate success. A real external credential
+/// problem (a fake secret, a Fabric admin setting not yet enabled) still surfaces as a genuine
+/// failure with the provider's own error message, never a silent pretend-success.
 /// </summary>
 public interface IDataSourceConnectionTester
 {
@@ -238,7 +238,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
 
-        (string? token, string? tokenError) = await SharePointAuth.AcquireTokenAsync(http, tenantId, clientId, secret, ct);
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(http, tenantId, clientId, secret, ct);
         if (token is null)
         {
             return new DataSourceTestResult(false, tokenError!, DateTime.Now);
@@ -246,7 +246,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 
         // A full site URL (https://contoso.sharepoint.com/sites/Sales) becomes the Graph path
         // "contoso.sharepoint.com:/sites/Sales" — Graph's documented way to address a site by URL.
-        string graphPath = SharePointAuth.GraphSitePath(site);
+        string graphPath = EntraAuth.GraphSitePath(site);
 
         try
         {
@@ -259,7 +259,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 
             if (response.IsSuccessStatusCode)
             {
-                string name = SharePointAuth.ReadJsonField(body, "displayName") ?? site.AbsolutePath;
+                string name = EntraAuth.ReadJsonField(body, "displayName") ?? site.AbsolutePath;
                 return new DataSourceTestResult(true,
                     $"Connected to SharePoint site \"{name}\".", DateTime.Now);
             }
@@ -280,7 +280,7 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
             }
 
             return new DataSourceTestResult(false,
-                $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {SharePointAuth.Truncate(body, 150)}",
+                $"Microsoft Graph returned HTTP {(int)response.StatusCode}: {EntraAuth.Truncate(body, 150)}",
                 DateTime.Now);
         }
         catch (HttpRequestException ex)
@@ -292,34 +292,75 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 }
 
 /// <summary>
-/// Data Lake / Lakehouse has no connector yet — the platform was left undecided on purpose
-/// ("ยังไม่มี/ยังไม่แน่ใจ — ทำโครงรอไว้"). This tester exists so the registry can hold a row for
-/// planning without the UI having a dead button; it always says plainly that nothing has been
-/// built rather than reporting a fake success or silently doing nothing.
+/// The "Data Lake / Lakehouse" type resolved to Microsoft Fabric / Power BI once the platform was
+/// chosen. A Fabric "Semantic model" (what the OneLake catalog calls the old "dataset") is queried
+/// with DAX through the Power BI REST API's Execute Queries endpoint — client-credentials OAuth2
+/// against Entra ID (same flow as SharePoint, different scope/token audience), then one POST.
+///
+/// Two prerequisites this app cannot satisfy from code: the Entra ID app registration needs the
+/// Power BI Service API permission (e.g. Dataset.Read.All), and a Fabric admin must enable
+/// "Allow service principals to use Fabric APIs" (or a security-group-scoped version of it) in the
+/// Fabric admin portal — Fabric rejects every service-principal call with no such error message
+/// until that switch is on, so a persistent 401/403 here usually means that setting, not a wrong
+/// secret.
 /// </summary>
-public class DataLakeConnectionTester : IDataSourceConnectionTester
+public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSourceConnectionTester
 {
+    public const string HttpClientName = "datasource-powerbi";
+
     public string SourceType => DataSourceTypes.DataLake;
 
-    public Task<DataSourceTestResult> TestAsync(
+    public async Task<DataSourceTestResult> TestAsync(
         Dictionary<string, string> config, string? secret, CancellationToken ct)
-        => Task.FromResult(new DataSourceTestResult(false,
-            "No Data Lake / Lakehouse connector is implemented yet — this entry is a placeholder " +
-            "for planning. When a platform is chosen (e.g. Microsoft Fabric / OneLake, Databricks), " +
-            "a connector needs to be built for it before this source can be tested or used.",
-            DateTime.Now));
+    {
+        string tenantId = config.GetValueOrDefault("tenantId", "").Trim();
+        string clientId = config.GetValueOrDefault("clientId", "").Trim();
+        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
+        string daxQuery = config.GetValueOrDefault("daxQuery", "").Trim();
+
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            return new DataSourceTestResult(false, "No client secret is configured for this Entra ID app registration.", DateTime.Now);
+        }
+
+        HttpClient http = httpClientFactory.CreateClient(HttpClientName);
+
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
+            http, tenantId, clientId, secret, ct, EntraAuth.PowerBiScope);
+        if (token is null)
+        {
+            return new DataSourceTestResult(false, tokenError!, DateTime.Now);
+        }
+
+        try
+        {
+            PowerBiQueryResult result = await PowerBiQuery.ExecuteAsync(http, token, datasetId, daxQuery, ct);
+            return new DataSourceTestResult(result.Success,
+                result.Success ? $"Connected — the DAX query returned {result.RowCount} row(s)." : result.Message,
+                DateTime.Now);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new DataSourceTestResult(false, $"Could not reach the Power BI API: {ex.Message}", DateTime.Now);
+        }
+    }
 }
 
 /// <summary>
-/// Client-credentials OAuth2 + small Graph JSON helpers shared between
-/// <see cref="SharePointConnectionTester"/> (which only checks the sign-in works) and
-/// <see cref="DataSourceFetchers.SharePointFetcher"/> (which actually reads files) — one place
-/// decides how a SharePoint secret becomes a Graph access token.
+/// Client-credentials OAuth2 + small Graph/PBI JSON helpers shared between
+/// <see cref="SharePointConnectionTester"/>/<see cref="PowerBiConnectionTester"/> (which only check
+/// the sign-in works) and <see cref="DataSourceFetchers.SharePointFetcher"/>/<see cref="DataSourceFetchers.PowerBiFetcher"/>
+/// (which actually pull data) — one place decides how a client secret becomes an access token,
+/// for whichever Microsoft API the caller passes as <paramref name="scope"/>.
 /// </summary>
-internal static class SharePointAuth
+internal static class EntraAuth
 {
+    public const string GraphScope = "https://graph.microsoft.com/.default";
+    public const string PowerBiScope = "https://analysis.windows.net/powerbi/api/.default";
+
     public static async Task<(string? Token, string? Error)> AcquireTokenAsync(
-        HttpClient http, string tenantId, string clientId, string secret, CancellationToken ct)
+        HttpClient http, string tenantId, string clientId, string secret, CancellationToken ct,
+        string scope = GraphScope)
     {
         try
         {
@@ -327,7 +368,7 @@ internal static class SharePointAuth
             {
                 ["client_id"] = clientId,
                 ["client_secret"] = secret,
-                ["scope"] = "https://graph.microsoft.com/.default",
+                ["scope"] = scope,
                 ["grant_type"] = "client_credentials",
             });
 
@@ -370,4 +411,74 @@ internal static class SharePointAuth
     }
 
     public static string Truncate(string text, int max) => text.Length <= max ? text : text[..max] + "…";
+}
+
+internal record PowerBiQueryResult(bool Success, string Message, string? RawJson, int? RowCount);
+
+/// <summary>
+/// Runs one DAX query against a Power BI / Fabric semantic model via the "Execute Queries" REST
+/// endpoint. Shared by <see cref="PowerBiConnectionTester"/> (reports row count) and
+/// <see cref="DataSourceFetchers.PowerBiFetcher"/> (hands the raw JSON to the AI) so "Test
+/// connection" runs the exact same query the real fetch would.
+/// </summary>
+internal static class PowerBiQuery
+{
+    public static async Task<PowerBiQueryResult> ExecuteAsync(
+        HttpClient http, string token, string datasetId, string daxQuery, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(datasetId))
+        {
+            return new PowerBiQueryResult(false, "No dataset (semantic model) ID is configured.", null, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(daxQuery))
+        {
+            return new PowerBiQueryResult(false, "No DAX query is configured.", null, null);
+        }
+
+        var payload = new
+        {
+            queries = new[] { new { query = daxQuery } },
+            serializerSettings = new { includeNulls = true },
+        };
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"https://api.powerbi.com/v1.0/myorg/datasets/{Uri.EscapeDataString(datasetId)}/executeQueries");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await http.SendAsync(request, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string detail = EntraAuth.ReadJsonField(body, "message") ?? EntraAuth.Truncate(body, 300);
+            string hint = response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden
+                ? " This usually means the Entra app registration lacks the Power BI Service API " +
+                  "permission (e.g. Dataset.Read.All), or a Fabric admin has not enabled \"Allow " +
+                  "service principals to use Fabric APIs\" for it."
+                : "";
+            return new PowerBiQueryResult(false, $"Power BI returned HTTP {(int)response.StatusCode}: {detail}{hint}", body, null);
+        }
+
+        return new PowerBiQueryResult(true, "OK", body, CountFirstTableRows(body));
+    }
+
+    private static int? CountFirstTableRows(string json)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            return doc.RootElement
+                .GetProperty("results")[0]
+                .GetProperty("tables")[0]
+                .GetProperty("rows")
+                .GetArrayLength();
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or IndexOutOfRangeException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
 }

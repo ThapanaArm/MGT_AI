@@ -177,11 +177,11 @@ builder.Services.AddDataProtection()
 builder.Services.AddSingleton<IDataSourceConnectionTester, LocalFolderConnectionTester>();
 builder.Services.AddSingleton<IDataSourceConnectionTester, ApiConnectionTester>();
 builder.Services.AddSingleton<IDataSourceConnectionTester, SharePointConnectionTester>();
-builder.Services.AddSingleton<IDataSourceConnectionTester, DataLakeConnectionTester>();
+builder.Services.AddSingleton<IDataSourceConnectionTester, PowerBiConnectionTester>();
 builder.Services.AddSingleton<IDataSourceFetcher, LocalFolderFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, ApiFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, SharePointFetcher>();
-builder.Services.AddSingleton<IDataSourceFetcher, DataLakeFetcher>();
+builder.Services.AddSingleton<IDataSourceFetcher, PowerBiFetcher>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
 // Self-service Projects and Skills — any signed-in employee, not just Admin.
@@ -200,6 +200,12 @@ builder.Services.AddHttpClient(ApiConnectionTester.HttpClientName, client =>
 builder.Services.AddHttpClient(SharePointConnectionTester.HttpClientName, client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddHttpClient(PowerBiConnectionTester.HttpClientName, client =>
+{
+    // Same per-request "timeoutMinutes" override as the API type (see ApiConnectionTester.ResolveTimeout) —
+    // a DAX query over a large semantic model can run considerably longer than a Graph call.
+    client.Timeout = TimeSpan.FromMinutes(30);
 });
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IChatService, ChatService>();
