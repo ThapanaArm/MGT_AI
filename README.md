@@ -963,20 +963,30 @@ Admin/IT ลงทะเบียนแหล่งข้อมูลไว้�
 | **API** | SAP OData, ระบบภายในที่มี REST API | **ได้จริง** — ยิง HTTP ไปที่ baseUrl พร้อม auth ที่ตั้งไว้ |
 | **SharePoint** | ไซต์เอกสารของแผนก | **ได้จริง** — OAuth2 client-credentials กับ Entra ID แล้วเรียก Microsoft Graph |
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | โฟลเดอร์แชร์บน server, UNC path | **ได้จริง** — ตรวจว่าโฟลเดอร์มีอยู่และเซิร์ฟเวอร์อ่านได้ |
-| **Data Lake / Lakehouse** | Microsoft Fabric / Power BI semantic model | **ได้จริง** — OAuth2 client-credentials กับ Entra ID (คนละ scope กับ SharePoint) แล้วรัน DAX ผ่าน Power BI REST API |
+| **Data Lake / Lakehouse** | Microsoft Fabric — semantic model (Power BI) หรือ Warehouse/Lakehouse (SQL) | **ได้จริง** — OAuth2 client-credentials กับ Entra ID (คนละ scope ต่อโหมด) แล้วรัน DAX ผ่าน Power BI REST API หรือ T-SQL ผ่าน SQL endpoint |
 
-**Data Lake ต่อ Microsoft Fabric แล้ว** — เมื่อแพลตฟอร์มถูกเลือกแล้ว (ผู้ใช้ใช้ Microsoft Fabric,
-เห็นได้จาก OneLake catalog ที่มี Semantic model อยู่) connector ตัวนี้ยิง DAX query ไปที่
-**Power BI REST API's Execute Queries endpoint** (`POST /v1.0/myorg/datasets/{id}/executeQueries`)
-โดยใช้ token แบบ client-credentials เดียวกับ SharePoint (คนละ `scope` — ดู `EntraAuth.PowerBiScope`
-ใน `ConnectionTesters.cs`) จึงใช้โค้ด auth ชุดเดียวกันซ้ำได้เลย
+**Data Lake ต่อ Microsoft Fabric ได้สองแบบ**, เลือกต่อ source ผ่านฟิลด์ `connectionMode`:
 
-ตั้งค่าที่ต้องกรอกใน registry: `tenantId`, `clientId` (Entra app), `datasetId` (GUID ของ semantic
-model — ดูได้จากหน้า Settings ของ model ใน Fabric/Power BI), `daxQuery` (คำสั่งที่จะรันทุกครั้งที่
-ดึงข้อมูล เช่น `EVALUATE 'Sales'`), และ Secret คือ client secret ของ Entra app
+1. **`PowerBi` (ค่า default)** — ยิง DAX query ไปที่ **Power BI REST API's Execute Queries
+   endpoint** (`POST /v1.0/myorg/datasets/{id}/executeQueries`) โดยใช้ token แบบ client-credentials
+   (scope `EntraAuth.PowerBiScope`) ตั้งค่าที่ต้องกรอกเพิ่ม: `datasetId` (GUID ของ semantic model —
+   ดูได้จากหน้า Settings ของ model ใน Fabric/Power BI), `daxQuery` (คำสั่งที่จะรันทุกครั้งที่ดึง
+   ข้อมูล เช่น `EVALUATE 'Sales'`)
+2. **`Warehouse`** — เชื่อมต่อ **Fabric Warehouse/Lakehouse SQL analytics endpoint** โดยตรงด้วย
+   `Microsoft.Data.SqlClient` (`SqlConnection.AccessToken` รับ token จาก client-credentials เดียวกัน
+   แต่คนละ scope — `EntraAuth.SqlScope` = `https://database.windows.net/.default`) แล้วรัน T-SQL
+   ที่ตั้งไว้ตรง ๆ ผลลัพธ์ถูกแปลงเป็นตาราง Markdown ก่อนส่งให้ AI ตั้งค่าที่ต้องกรอกเพิ่ม:
+   `sqlEndpoint` (โฮสต์เนมล้วน เช่น `xxxx.datawarehouse.fabric.microsoft.com` — ไม่ต้องใส่ `tcp:`
+   หรือ port), `database` (ชื่อ warehouse/lakehouse), `sqlQuery` (คำสั่ง SELECT ที่จะรันทุกครั้ง)
 
-**สองเงื่อนไขที่ระบบตรวจให้ไม่ได้ ต้องให้ IT/Fabric admin จัดการเอง:**
-1. Entra ID app registration ต้องมีสิทธิ์ Power BI Service API (เช่น `Dataset.Read.All`)
+ทั้งสองโหมดใช้ `tenantId`, `clientId` (Entra app) และ Secret (client secret ของ Entra app) ร่วมกัน —
+source ที่สร้างไว้ก่อนมีฟิลด์นี้ (ไม่มี `connectionMode` เลย) ยังทำงานเหมือนเดิมทุกประการ (เท่ากับ
+`PowerBi` โดย default)
+
+**สองเงื่อนไขที่ระบบตรวจให้ไม่ได้ ต้องให้ IT/Fabric admin จัดการเอง (ทั้งสองโหมด):**
+1. Entra ID app registration ต้องมีสิทธิ์ที่ถูกต้อง — Power BI Service API (เช่น
+   `Dataset.Read.All`) สำหรับโหมด `PowerBi`, หรือสิทธิ์อ่านข้อมูลใน SQL endpoint นั้น (grant ให้
+   service principal โดยตรง) สำหรับโหมด `Warehouse`
 2. Fabric admin ต้องเปิด **"Allow service principals to use Fabric APIs"** ในหน้า Fabric admin
    portal (ทั้ง tenant หรือจำกัดเฉพาะ security group ก็ได้) — ถ้าไม่เปิด Fabric จะปฏิเสธทุก
    client-credentials call เงียบ ๆ ด้วย 401/403 โดยไม่บอกสาเหตุ ซึ่งข้อความ error ของ connector
@@ -1067,7 +1077,7 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | อ่านไฟล์ `.txt/.csv/.md/.json/.log/.xlsx/.xls` ทุกไฟล์ใต้ path ที่ตั้งไว้ (หรือใต้ path ย่อยตาม scope filter) แปลงเป็นข้อความต่อกัน — Excel ใช้ตัวแปลงเดียวกับไฟล์แนบในแชท |
 | **API** | ยิงตาม `method` ที่ตั้งไว้ (`GET` ค่าเริ่มต้น หรือ `POST` พร้อม `requestBody`) ไปที่ `baseUrl` ด้วย auth ที่ตั้งไว้ (เหมือนตอน Test connection) ต่อ scope filter เป็น query string ท้าย URL แล้วส่ง response body ทั้งก้อนเป็นข้อความให้ AI |
 | **SharePoint** | sign-in แบบ client-credentials เดียวกับ Test connection แล้วเรียก Microsoft Graph ไล่อ่านไฟล์ในไลบรารีเอกสารของไซต์ (หรือใต้โฟลเดอร์ย่อยตาม scope filter) |
-| **Data Lake / Lakehouse** | sign-in แบบ client-credentials เดียวกับ SharePoint (คนละ scope) แล้วรัน `daxQuery` ที่ตั้งไว้ผ่าน Power BI Execute Queries API ส่ง JSON ผลลัพธ์ทั้งก้อนเป็นข้อความให้ AI — scope filter (ถ้ามี) จะ**แทนที่** `daxQuery` เดิมทั้งหมด แทนที่จะต่อท้าย เพราะ DAX ไม่มีวากยสัมพันธ์ "เติม filter เข้าไปในคำสั่งเดิม" แบบ query string ของ URL |
+| **Data Lake / Lakehouse** | sign-in แบบ client-credentials เดียวกับ SharePoint (คนละ scope ต่อโหมด) แล้วรันตาม `connectionMode`: **`PowerBi`** — `daxQuery` ผ่าน Power BI Execute Queries API ส่ง JSON ผลลัพธ์ทั้งก้อนเป็นข้อความให้ AI; **`Warehouse`** — `sqlQuery` ผ่าน SQL endpoint ของ Fabric Warehouse/Lakehouse ตรง ๆ ด้วย `Microsoft.Data.SqlClient` แปลงผลลัพธ์เป็นตาราง Markdown ก่อนส่งให้ AI — ทั้งสองโหมด scope filter (ถ้ามี) จะ**แทนที่** query เดิมทั้งหมด แทนที่จะต่อท้าย เพราะทั้ง DAX และ SQL ที่พิมพ์เองไม่มีวากยสัมพันธ์ "เติม filter เข้าไปในคำสั่งเดิม" แบบ query string ของ URL |
 
 ทุกตัวมี **เพดานขนาด** กันข้อมูลก้อนใหญ่ทำให้บทสนทนาบวมเกินไป: อย่างมาก 30 ไฟล์และ
 120,000 ตัวอักษรต่อการดึงหนึ่งครั้ง (ไฟล์เดี่ยวเกิน 5 MB ถูกข้าม) เกินแล้วตัดพร้อมบอกผู้ใช้ว่า

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { createPortal } from 'react-dom';
+import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api, apiForm, download } from '../api/client';
+import { useAuth } from '../auth/AuthContext';
 import MessageContent from '../components/MessageContent';
 import {
   FILE_KIND_LABELS,
@@ -46,6 +48,20 @@ const SUGGESTIONS = [
   },
 ];
 
+const AUDIT_LINKS = [
+  { to: '/logs/chat', label: 'Search chat logs' },
+  { to: '/logs/audit', label: 'System event log' },
+  { to: '/logs/cost', label: 'Token cost report' },
+];
+
+const ADMIN_LINKS = [
+  { to: '/admin/policy-rules', label: 'Question screening rules' },
+  { to: '/admin/model-pricing', label: 'Model pricing / exchange rate' },
+  { to: '/admin/users', label: 'User management' },
+  { to: '/admin/data-sources', label: 'Data source registry' },
+  { to: '/admin/data-source-access', label: 'Data source access' },
+];
+
 /** Guess the kind from the extension — only for the icon/label before upload; the server decides. */
 function guessKind(fileName) {
   const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
@@ -56,6 +72,10 @@ function guessKind(fileName) {
 }
 
 export default function ChatPage() {
+  const { isAdmin, canReadLogs } = useAuth();
+  const navigate = useNavigate();
+  const { historySlot, closeMobileSidebar } = useOutletContext() ?? {};
+  const [showAdminMenu, setShowAdminMenu] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -411,7 +431,8 @@ export default function ChatPage() {
 
   return (
     <div className="chat-layout">
-      <aside className="chat-sessions">
+      {historySlot && createPortal(
+      <div className="chat-sessions">
         <div className="chat-sessions-search">
           <span className="chat-sessions-search-icon" aria-hidden="true">🔎</span>
           <input
@@ -434,20 +455,30 @@ export default function ChatPage() {
             <div
               key={session.sessionId}
               className={`chat-session${session.sessionId === activeSessionId ? ' active' : ''}`}
-              onClick={() => setActiveSessionId(session.sessionId)}
+              onClick={() => {
+                setActiveSessionId(session.sessionId);
+                closeMobileSidebar?.();
+              }}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => e.key === 'Enter' && setActiveSessionId(session.sessionId)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                setActiveSessionId(session.sessionId);
+                closeMobileSidebar?.();
+              }}
             >
               <span className="chat-session-icon" aria-hidden="true">💬</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="chat-session-title">
-                  {session.projectName && <span className="badge badge-brand" style={{ marginRight: 6 }}>{session.projectName}</span>}
-                  {session.dataSourceName && <span className="badge badge-info" style={{ marginRight: 6 }}>🔌 {session.dataSourceName}</span>}
-                  {session.title}
-                </div>
+              <div className="chat-session-body">
+                <div className="chat-session-title">{session.title}</div>
                 <div className="chat-session-meta">
-                  {session.messageCount} messages · {formatTime(session.updatedAt)}
+                  {[
+                    session.projectName,
+                    session.dataSourceName && `🔌 ${session.dataSourceName}`,
+                    `${session.messageCount} msg`,
+                    formatTime(session.updatedAt),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </div>
               </div>
               <button
@@ -461,7 +492,9 @@ export default function ChatPage() {
             </div>
           ))}
         </div>
-      </aside>
+      </div>,
+      historySlot,
+      )}
 
       <div
         className={`chat-main${dragging ? ' dragging' : ''}`}
@@ -490,13 +523,65 @@ export default function ChatPage() {
             <span />
           )}
 
-          <button
-            type="button"
-            className="chat-topbar-help"
-            title="Attach files, pick a Project or Data source before your first message, choose a model, and export any answer as a report."
-          >
-            ?
-          </button>
+          {isAdmin || canReadLogs ? (
+            <div className="chat-topbar-admin">
+              <button
+                type="button"
+                className="chat-topbar-gear"
+                title={isAdmin ? 'Administrator settings' : 'Auditing'}
+                onClick={() => setShowAdminMenu((v) => !v)}
+                aria-expanded={showAdminMenu}
+              >
+                ⚙️
+              </button>
+              {showAdminMenu && (
+                <div className="chat-topbar-admin-menu">
+                  {canReadLogs && (
+                    <>
+                      <div className="chat-topbar-admin-menu-label">Auditing</div>
+                      {AUDIT_LINKS.map((link) => (
+                        <button
+                          key={link.to}
+                          type="button"
+                          onClick={() => {
+                            setShowAdminMenu(false);
+                            navigate(link.to);
+                          }}
+                        >
+                          {link.label}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {isAdmin && (
+                    <>
+                      <div className="chat-topbar-admin-menu-label">Administrator</div>
+                      {ADMIN_LINKS.map((link) => (
+                        <button
+                          key={link.to}
+                          type="button"
+                          onClick={() => {
+                            setShowAdminMenu(false);
+                            navigate(link.to);
+                          }}
+                        >
+                          {link.label}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="chat-topbar-help"
+              title="Attach files, pick a Project or Data source before your first message, choose a model, and export any answer as a report."
+            >
+              ?
+            </button>
+          )}
         </div>
 
         {dragging && (

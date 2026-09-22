@@ -24,11 +24,12 @@ public static class DataSourceConfig
         [DataSourceTypes.LocalFolder] = ["path"],
         // siteUrl is the SharePoint site, e.g. https://contoso.sharepoint.com/sites/Sales
         [DataSourceTypes.SharePoint] = ["siteUrl", "tenantId", "clientId"],
-        // Microsoft Fabric / Power BI semantic model — datasetId is the model's GUID (from its
-        // Settings page or URL in the Fabric portal), daxQuery is the query that runs on every
-        // fetch (e.g. "EVALUATE 'Sales'"). See PowerBiConnectionTester for the two admin-side
-        // prerequisites (Entra API permission + a Fabric admin portal switch) this cannot check.
-        [DataSourceTypes.DataLake] = ["tenantId", "clientId", "datasetId", "daxQuery"],
+        // Microsoft Fabric — either a Power BI semantic model (DAX) or a Warehouse/Lakehouse SQL
+        // endpoint (T-SQL), picked per source via "connectionMode". tenantId/clientId are common to
+        // both; the mode-specific fields (datasetId+daxQuery, or sqlEndpoint+database+sqlQuery) are
+        // validated below rather than listed here, since exactly one set is required depending on
+        // the mode. See PowerBiConnectionTester for the admin-side prerequisites this cannot check.
+        [DataSourceTypes.DataLake] = ["tenantId", "clientId"],
     };
 
     /// <summary>Keys whose value never needs to reach the frontend even unmasked — currently none, but kept for symmetry with the secret column.</summary>
@@ -96,6 +97,31 @@ public static class DataSourceConfig
                     || minutes <= 0))
             {
                 throw new AppException("timeoutMinutes must be a positive number");
+            }
+        }
+
+        if (string.Equals(sourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase))
+        {
+            // Blank = PowerBi, so every source registered before this field existed is unaffected.
+            string mode = config.GetValueOrDefault("connectionMode", "").Trim();
+            if (mode.Length > 0 && !new[] { "PowerBi", "Warehouse" }.Contains(mode, StringComparer.OrdinalIgnoreCase))
+            {
+                throw new AppException("connectionMode must be PowerBi or Warehouse");
+            }
+
+            bool isWarehouse = string.Equals(mode, "Warehouse", StringComparison.OrdinalIgnoreCase);
+            string[] modeRequired = isWarehouse
+                ? ["sqlEndpoint", "database", "sqlQuery"]
+                : ["datasetId", "daxQuery"];
+
+            List<string> missingMode = modeRequired
+                .Where(key => string.IsNullOrWhiteSpace(config.GetValueOrDefault(key)))
+                .ToList();
+
+            if (missingMode.Count > 0)
+            {
+                throw new AppException(
+                    $"Missing required setting(s) for {sourceType} ({(isWarehouse ? "Warehouse" : "Power BI")} mode): {string.Join(", ", missingMode)}");
             }
         }
     }

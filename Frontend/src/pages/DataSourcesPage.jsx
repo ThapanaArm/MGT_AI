@@ -34,10 +34,20 @@ const CONFIG_FIELDS = {
   DataLake: [
     { key: 'tenantId', label: 'Entra ID tenant ID' },
     { key: 'clientId', label: 'Entra ID app (client) ID' },
-    { key: 'datasetId', label: 'Dataset (semantic model) ID', placeholder: 'GUID — from the model’s Settings page in Fabric/Power BI' },
     {
-      key: 'daxQuery', label: 'DAX query', type: 'textarea',
+      key: 'connectionMode', label: 'Connection mode', type: 'select',
+      options: ['PowerBi', 'Warehouse'], default: 'PowerBi',
+    },
+    { key: 'datasetId', label: 'Dataset (semantic model) ID (if Connection mode = PowerBi)', placeholder: 'GUID — from the model’s Settings page in Fabric/Power BI' },
+    {
+      key: 'daxQuery', label: 'DAX query (if Connection mode = PowerBi)', type: 'textarea',
       placeholder: "EVALUATE 'Sales'",
+    },
+    { key: 'sqlEndpoint', label: 'SQL endpoint (if Connection mode = Warehouse)', placeholder: 'xxxx.datawarehouse.fabric.microsoft.com' },
+    { key: 'database', label: 'Database / warehouse name (if Connection mode = Warehouse)', placeholder: 'Sales_DW' },
+    {
+      key: 'sqlQuery', label: 'SQL query (if Connection mode = Warehouse)', type: 'textarea',
+      placeholder: 'SELECT TOP 1000 * FROM dbo.Sales',
     },
     { key: 'timeoutMinutes', label: 'Timeout (minutes)', placeholder: '2 (default)' },
   ],
@@ -239,11 +249,15 @@ export default function DataSourcesPage() {
 
           {form.sourceType === 'DataLake' && (
             <div className="alert alert-warn field-wide">
-              Connects to a Microsoft Fabric / Power BI semantic model via DAX. Before this will
-              work, the Entra ID app registration above needs the Power BI Service API permission
-              (e.g. Dataset.Read.All), and a Fabric admin must enable "Allow service principals to
-              use Fabric APIs" in the Fabric admin portal — ask your IT/Fabric administrator. Until
-              then, "Test connection" will report the exact 401/403 Fabric returns.
+              Connects to Microsoft Fabric as either a Power BI semantic model queried with DAX
+              ("PowerBi" mode) or a Fabric Warehouse/Lakehouse SQL analytics endpoint queried with
+              T-SQL ("Warehouse" mode) — pick the mode above; only that mode's fields below are
+              used. Either way, the Entra ID app registration needs the right permission (the
+              Power BI Service API, e.g. Dataset.Read.All, for PowerBi mode; SQL access granted to
+              the service principal for Warehouse mode) and a Fabric admin must enable "Allow
+              service principals to use Fabric APIs" in the Fabric admin portal — ask your
+              IT/Fabric administrator. Until then, "Test connection" will report the exact error
+              Fabric or the SQL endpoint returns.
             </div>
           )}
 

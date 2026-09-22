@@ -1,4 +1,6 @@
 using MgtAiAuthen.Api.Contracts;
+using Microsoft.Data.SqlClient;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -292,17 +294,21 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 }
 
 /// <summary>
-/// The "Data Lake / Lakehouse" type resolved to Microsoft Fabric / Power BI once the platform was
-/// chosen. A Fabric "Semantic model" (what the OneLake catalog calls the old "dataset") is queried
-/// with DAX through the Power BI REST API's Execute Queries endpoint — client-credentials OAuth2
-/// against Entra ID (same flow as SharePoint, different scope/token audience), then one POST.
+/// The "Data Lake / Lakehouse" type covers two different ways of reading from Microsoft Fabric,
+/// chosen per source via the "connectionMode" config key (see <see cref="DataLakeMode"/>):
+/// a Power BI / Fabric "Semantic model" queried with DAX through the Power BI REST API, or a
+/// Fabric Warehouse/Lakehouse SQL analytics endpoint queried with plain T-SQL. Both authenticate
+/// the same way — client-credentials OAuth2 against Entra ID (same flow as SharePoint, different
+/// scope/token audience) — so this tester acquires the token once and hands off to whichever
+/// query engine the mode calls for.
 ///
-/// Two prerequisites this app cannot satisfy from code: the Entra ID app registration needs the
-/// Power BI Service API permission (e.g. Dataset.Read.All), and a Fabric admin must enable
-/// "Allow service principals to use Fabric APIs" (or a security-group-scoped version of it) in the
-/// Fabric admin portal — Fabric rejects every service-principal call with no such error message
-/// until that switch is on, so a persistent 401/403 here usually means that setting, not a wrong
-/// secret.
+/// Two prerequisites this app cannot satisfy from code, for either mode: the Entra ID app
+/// registration needs the right API permission (Power BI Service API, e.g. Dataset.Read.All, for
+/// PowerBi mode — SQL-level access granted to the service principal for Warehouse mode), and a
+/// Fabric admin must enable "Allow service principals to use Fabric APIs" (or a security-group-
+/// scoped version of it) in the Fabric admin portal — Fabric rejects every service-principal call
+/// with no such error message until that switch is on, so a persistent 401/403 here usually means
+/// that setting, not a wrong secret.
 /// </summary>
 public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDataSourceConnectionTester
 {
@@ -315,8 +321,6 @@ public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDa
     {
         string tenantId = config.GetValueOrDefault("tenantId", "").Trim();
         string clientId = config.GetValueOrDefault("clientId", "").Trim();
-        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
-        string daxQuery = config.GetValueOrDefault("daxQuery", "").Trim();
 
         if (string.IsNullOrWhiteSpace(secret))
         {
@@ -324,6 +328,18 @@ public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDa
         }
 
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
+
+        if (DataLakeMode.Resolve(config) == DataLakeMode.Warehouse)
+        {
+            FabricWarehouseQueryResult wh = await FabricWarehouseQuery.ExecuteAsync(
+                http, tenantId, clientId, secret, config, sqlOverride: null, ct);
+            return new DataSourceTestResult(wh.Success,
+                wh.Success ? $"Connected — the query returned {wh.RowCount} row(s)." : wh.Message,
+                DateTime.Now);
+        }
+
+        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
+        string daxQuery = config.GetValueOrDefault("daxQuery", "").Trim();
 
         (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
             http, tenantId, clientId, secret, ct, EntraAuth.PowerBiScope);
@@ -346,6 +362,18 @@ public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDa
     }
 }
 
+/// <summary>Which of the two Fabric query engines a DataLake source uses. Blank/missing = PowerBi, so every source registered before this field existed keeps behaving exactly as it did.</summary>
+internal static class DataLakeMode
+{
+    public const string PowerBi = "PowerBi";
+    public const string Warehouse = "Warehouse";
+
+    public static string Resolve(Dictionary<string, string> config)
+        => string.Equals(config.GetValueOrDefault("connectionMode", ""), Warehouse, StringComparison.OrdinalIgnoreCase)
+            ? Warehouse
+            : PowerBi;
+}
+
 /// <summary>
 /// Client-credentials OAuth2 + small Graph/PBI JSON helpers shared between
 /// <see cref="SharePointConnectionTester"/>/<see cref="PowerBiConnectionTester"/> (which only check
@@ -357,6 +385,9 @@ internal static class EntraAuth
 {
     public const string GraphScope = "https://graph.microsoft.com/.default";
     public const string PowerBiScope = "https://analysis.windows.net/powerbi/api/.default";
+    // Fabric Warehouse/Lakehouse SQL endpoints sit on the same engine surface as Azure SQL, so they
+    // accept the standard Azure SQL Database AAD audience — there is no separate Fabric-specific one.
+    public const string SqlScope = "https://database.windows.net/.default";
 
     public static async Task<(string? Token, string? Error)> AcquireTokenAsync(
         HttpClient http, string tenantId, string clientId, string secret, CancellationToken ct,
@@ -481,4 +512,134 @@ internal static class PowerBiQuery
             return null;
         }
     }
+}
+
+internal record FabricWarehouseQueryResult(bool Success, string Message, string? FormattedText, int? RowCount, bool Truncated = false);
+
+/// <summary>
+/// Runs one T-SQL query against a Fabric Warehouse/Lakehouse SQL analytics endpoint and formats
+/// the result as a Markdown table (cheap to read, and the same shape <c>MessageContent.jsx</c>
+/// already renders nicely if it ever reaches the user verbatim). Shared by
+/// <see cref="PowerBiConnectionTester"/> (reports row count) and
+/// <see cref="DataSourceFetchers.PowerBiFetcher"/> (hands the table to the AI) so "Test connection"
+/// runs the exact same query the real fetch would.
+///
+/// Authenticates the same way as <see cref="PowerBiQuery"/> — client-credentials OAuth2 against
+/// Entra ID — but for the SQL scope, then hands the raw access token to <see cref="SqlConnection"/>
+/// directly (its <c>AccessToken</c> property) rather than building an AAD-mode connection string,
+/// so this needs no tenant-specific connection-string syntax to get right.
+/// </summary>
+internal static class FabricWarehouseQuery
+{
+    public static async Task<FabricWarehouseQueryResult> ExecuteAsync(
+        HttpClient http, string tenantId, string clientId, string secret,
+        Dictionary<string, string> config, string? sqlOverride, CancellationToken ct)
+    {
+        string sqlEndpoint = NormalizeEndpoint(config.GetValueOrDefault("sqlEndpoint", ""));
+        string database = config.GetValueOrDefault("database", "").Trim();
+        string sqlQuery = string.IsNullOrWhiteSpace(sqlOverride)
+            ? config.GetValueOrDefault("sqlQuery", "").Trim()
+            : sqlOverride.Trim();
+
+        if (sqlEndpoint.Length == 0)
+        {
+            return new FabricWarehouseQueryResult(false, "No SQL endpoint is configured.", null, null);
+        }
+
+        if (database.Length == 0)
+        {
+            return new FabricWarehouseQueryResult(false, "No database (warehouse/lakehouse) name is configured.", null, null);
+        }
+
+        if (sqlQuery.Length == 0)
+        {
+            return new FabricWarehouseQueryResult(false, "No SQL query is configured.", null, null);
+        }
+
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
+            http, tenantId, clientId, secret, ct, EntraAuth.SqlScope);
+        if (token is null)
+        {
+            return new FabricWarehouseQueryResult(false, tokenError!, null, null);
+        }
+
+        string connectionString =
+            $"Server=tcp:{sqlEndpoint},1433;Initial Catalog={database};Encrypt=True;TrustServerCertificate=False;";
+
+        try
+        {
+            await using var connection = new SqlConnection(connectionString) { AccessToken = token };
+            await connection.OpenAsync(ct);
+
+            await using var command = new SqlCommand(sqlQuery, connection)
+            {
+                CommandTimeout = (int)Math.Max(1, ApiConnectionTester.ResolveTimeout(config).TotalSeconds),
+            };
+
+            await using SqlDataReader reader = await command.ExecuteReaderAsync(ct);
+            return FormatAsMarkdownTable(reader, await ReadAllAsync(reader, ct));
+        }
+        catch (SqlException ex)
+        {
+            string hint = ex.Number is 18456 or 4060 or 40615
+                ? " This usually means the service principal has not been granted SQL access to " +
+                  "this warehouse/database (a Fabric admin or the item owner grants it), or a " +
+                  "Fabric admin has not enabled \"Allow service principals to use Fabric APIs\"."
+                : "";
+            return new FabricWarehouseQueryResult(false,
+                $"The Fabric Warehouse SQL endpoint rejected the query: {ex.Message}{hint}", null, null);
+        }
+    }
+
+    /// <summary>Strips a stray "tcp:" prefix or ",1433" port someone pasted along with the hostname — the connection string below adds both itself.</summary>
+    private static string NormalizeEndpoint(string raw)
+    {
+        string endpoint = raw.Trim().TrimStart(' ').Replace("tcp:", "", StringComparison.OrdinalIgnoreCase);
+        int comma = endpoint.IndexOf(',');
+        return (comma >= 0 ? endpoint[..comma] : endpoint).Trim();
+    }
+
+    private static async Task<List<object?[]>> ReadAllAsync(SqlDataReader reader, CancellationToken ct)
+    {
+        var rows = new List<object?[]>();
+        while (rows.Count < DataSourceFetchLimits.MaxWarehouseRows && await reader.ReadAsync(ct))
+        {
+            var row = new object?[reader.FieldCount];
+            reader.GetValues(row!);
+            rows.Add(row);
+        }
+        return rows;
+    }
+
+    private static FabricWarehouseQueryResult FormatAsMarkdownTable(SqlDataReader reader, List<object?[]> rows)
+    {
+        int columnCount = reader.FieldCount;
+        string[] columns = Enumerable.Range(0, columnCount).Select(reader.GetName).ToArray();
+
+        var sb = new StringBuilder();
+        sb.Append("| ").Append(string.Join(" | ", columns)).Append(" |\n");
+        sb.Append("| ").Append(string.Join(" | ", columns.Select(_ => "---"))).Append(" |\n");
+
+        int written = 0;
+        bool truncated = false;
+        foreach (object?[] row in rows)
+        {
+            string line = "| " + string.Join(" | ", row.Select(FormatCell)) + " |\n";
+            if (sb.Length + line.Length > DataSourceFetchLimits.MaxChars)
+            {
+                truncated = true;
+                break;
+            }
+            sb.Append(line);
+            written++;
+        }
+
+        return new FabricWarehouseQueryResult(true, "OK", sb.ToString(), written, truncated);
+    }
+
+    private static string FormatCell(object? value)
+        => value is null or DBNull
+            ? ""
+            : (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "")
+                .Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
 }

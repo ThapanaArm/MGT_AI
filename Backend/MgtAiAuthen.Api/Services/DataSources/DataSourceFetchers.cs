@@ -37,6 +37,9 @@ internal static class DataSourceFetchLimits
     public const int MaxChars = 120_000;
     public const int MaxFiles = 30;
     public const long MaxFileBytes = 5 * 1024 * 1024;
+    // A defensive cap independent of MaxChars — an admin's SQL query should already have its own
+    // TOP/LIMIT, but this keeps one huge unbounded query from holding the connection open forever.
+    public const int MaxWarehouseRows = 5_000;
 }
 
 /// <summary>
@@ -379,12 +382,15 @@ public class SharePointFetcher(
 }
 
 /// <summary>
-/// Runs a DAX query against a Power BI / Fabric semantic model and hands the raw JSON result to
-/// the AI as text — same client-credentials sign-in <see cref="PowerBiConnectionTester"/> verifies.
-/// The grant's scope filter, when present, REPLACES the source's configured query rather than
-/// appending to it (DAX has no generic "tack a filter onto any query" syntax the way a URL query
-/// string does) — an admin restricting a user writes that user's own DAX query as the filter, e.g.
-/// "EVALUATE FILTER('Sales', 'Sales'[Division] = \"North\")".
+/// Runs a query against whichever Fabric engine the source's "connectionMode" selects — DAX
+/// against a Power BI semantic model, or T-SQL against a Fabric Warehouse/Lakehouse SQL endpoint
+/// — and hands the result to the AI as text. Same client-credentials sign-in
+/// <see cref="PowerBiConnectionTester"/> verifies. The grant's scope filter, when present, REPLACES
+/// the source's configured query rather than appending to it (neither DAX nor an arbitrary T-SQL
+/// query has a generic "tack a filter onto any query" syntax the way a URL query string does) — an
+/// admin restricting a user writes that user's own query as the filter, e.g.
+/// "EVALUATE FILTER('Sales', 'Sales'[Division] = \"North\")" or "SELECT * FROM Sales WHERE
+/// Division = 'North'".
 /// </summary>
 public class PowerBiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceFetcher
 {
@@ -393,19 +399,25 @@ public class PowerBiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceF
     public async Task<DataSourceFetchResult> FetchAsync(
         Dictionary<string, string> config, string? secret, string? scopeFilter, CancellationToken ct)
     {
-        string tenantId = config.GetValueOrDefault("tenantId", "").Trim();
-        string clientId = config.GetValueOrDefault("clientId", "").Trim();
-        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
-        string daxQuery = string.IsNullOrWhiteSpace(scopeFilter)
-            ? config.GetValueOrDefault("daxQuery", "").Trim()
-            : scopeFilter.Trim();
-
         if (string.IsNullOrWhiteSpace(secret))
         {
             return new DataSourceFetchResult(false, "No client secret is configured.", null, 0, false);
         }
 
+        string tenantId = config.GetValueOrDefault("tenantId", "").Trim();
+        string clientId = config.GetValueOrDefault("clientId", "").Trim();
+
         HttpClient http = httpClientFactory.CreateClient(PowerBiConnectionTester.HttpClientName);
+
+        if (DataLakeMode.Resolve(config) == DataLakeMode.Warehouse)
+        {
+            return await FetchFromWarehouseAsync(http, tenantId, clientId, secret, config, scopeFilter, ct);
+        }
+
+        string datasetId = config.GetValueOrDefault("datasetId", "").Trim();
+        string daxQuery = string.IsNullOrWhiteSpace(scopeFilter)
+            ? config.GetValueOrDefault("daxQuery", "").Trim()
+            : scopeFilter.Trim();
 
         (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
             http, tenantId, clientId, secret, ct, EntraAuth.PowerBiScope);
@@ -445,5 +457,36 @@ public class PowerBiFetcher(IHttpClientFactory httpClientFactory) : IDataSourceF
         return new DataSourceFetchResult(true,
             $"Fetched {result.RowCount} row(s) from the semantic model{(truncated ? " (truncated)" : "")}.",
             content, content.Length, truncated);
+    }
+
+    private static async Task<DataSourceFetchResult> FetchFromWarehouseAsync(
+        HttpClient http, string tenantId, string clientId, string secret,
+        Dictionary<string, string> config, string? scopeFilter, CancellationToken ct)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(ApiConnectionTester.ResolveTimeout(config));
+
+        FabricWarehouseQueryResult result;
+        try
+        {
+            result = await FabricWarehouseQuery.ExecuteAsync(
+                http, tenantId, clientId, secret, config, scopeFilter, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new DataSourceFetchResult(false,
+                $"Timed out waiting for the Fabric Warehouse SQL endpoint (after {ApiConnectionTester.ResolveTimeout(config).TotalMinutes:0.#} minute(s) — " +
+                "raise \"Timeout (minutes)\" if this query is just slow).", null, 0, false);
+        }
+
+        if (!result.Success)
+        {
+            return new DataSourceFetchResult(false, result.Message, null, 0, false);
+        }
+
+        string text = result.FormattedText ?? "";
+        return new DataSourceFetchResult(true,
+            $"Fetched {result.RowCount} row(s) from the Fabric Warehouse{(result.Truncated ? " (truncated)" : "")}.",
+            text, text.Length, result.Truncated);
     }
 }

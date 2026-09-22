@@ -181,6 +181,7 @@ textarea {
 }
 
 .sidebar {
+  position: relative;
   width: 240px;
   flex-shrink: 0;
   background: var(--sidebar);
@@ -189,6 +190,51 @@ textarea {
   flex-direction: column;
   padding: 18px 14px;
   gap: 4px;
+  transition: width 0.15s ease;
+}
+
+.sidebar.collapsed {
+  width: 64px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .sidebar-brand-text,
+.sidebar.collapsed .sidebar-history-slot,
+.sidebar.collapsed .sidebar-section {
+  display: none;
+}
+
+.sidebar.collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0 0 14px;
+}
+
+.sidebar.collapsed .nav-link,
+.sidebar.collapsed .sidebar-new-chat {
+  text-align: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .nav-icon {
+  margin-right: 0;
+}
+
+.sidebar.collapsed .sidebar-user-row {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar.collapsed .sidebar-user-menu {
+  position: absolute;
+  bottom: 54px;
+  left: 10px;
+  width: 240px;
+  z-index: 20;
+  box-shadow: var(--shadow);
 }
 
 .sidebar-brand {
@@ -203,9 +249,35 @@ textarea {
   margin-bottom: 8px;
 }
 
+.sidebar-brand-text {
+  flex: 1;
+  min-width: 0;
+}
+
 .sidebar-brand-icon {
   font-size: 18px;
   line-height: 1.3;
+}
+
+.sidebar-collapse-btn {
+  position: absolute;
+  top: 22px;
+  right: -11px;
+  z-index: 5;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #24334a;
+  background: var(--sidebar);
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-collapse-btn:hover {
+  color: #fff;
+  border-color: var(--brand);
 }
 
 .sidebar-new-chat {
@@ -259,6 +331,14 @@ textarea {
   font-weight: 500;
 }
 
+.sidebar-history-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0 -14px;
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding-top: 14px;
@@ -266,13 +346,10 @@ textarea {
   font-size: 13px;
 }
 
-.sidebar-help {
+.sidebar-history {
   width: 100%;
   text-align: left;
-  background: none;
-  border: none;
   margin-bottom: 6px;
-  cursor: help;
 }
 
 .sidebar-user-row {
@@ -712,23 +789,29 @@ tbody tr:last-child td {
 /* บับเบิลที่ merges กับ sidebar หลัก — พื้นหลังสีเดียวกัน ไม่มีเส้นคั่น เพื่อให้อ่านเป็น
    panel เดียวต่อเนื่องกัน ตามสไตล์ mockup */
 .chat-sessions {
-  width: 260px;
-  flex-shrink: 0;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
   background: var(--sidebar);
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 4px 14px 0;
 }
 
 .chat-sessions-search {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 7px 12px;
-  margin-bottom: 4px;
+  padding: 8px 12px;
+  margin-bottom: 2px;
   border: 1px solid #24334a;
   border-radius: 999px;
   background: #1e293b;
+  transition: border-color 0.15s;
+}
+
+.chat-sessions-search:focus-within {
+  border-color: var(--brand);
 }
 
 .chat-sessions-search-icon {
@@ -756,35 +839,57 @@ tbody tr:last-child td {
 
 .chat-sessions-label {
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #64748b;
-  padding: 12px 10px 6px;
+  padding: 14px 10px 6px;
 }
 
 .chat-session-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+.chat-session-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-session-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-session-list::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 999px;
+}
+
+.chat-session-list::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }
 
 .chat-session {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  gap: 9px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   border: 1px solid transparent;
+  transition: background 0.1s;
 }
 
 .chat-session-icon {
   flex-shrink: 0;
   font-size: 13px;
-  opacity: 0.8;
-  margin-top: 1px;
+  opacity: 0.7;
 }
 
 .chat-session:hover {
@@ -796,10 +901,21 @@ tbody tr:last-child td {
   border-color: var(--brand);
 }
 
-.chat-session-title {
+.chat-session.active .chat-session-icon {
+  opacity: 1;
+}
+
+.chat-session-body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-session-title {
   font-size: 13px;
+  font-weight: 500;
   color: #e2e8f0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -809,23 +925,33 @@ tbody tr:last-child td {
 .chat-session-meta {
   font-size: 11px;
   color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ปุ่มลบซ่อนไว้จนกว่าจะ hover/focus แถวนั้น — ลดความรกตาม mockup ที่ใช้เมนู "..." แบบเนียน */
 .chat-session-delete {
+  flex-shrink: 0;
   background: none;
   border: none;
   color: #64748b;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 2px 4px;
+  border-radius: 4px;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity 0.1s, background 0.1s, color 0.1s;
 }
 
 .chat-session:hover .chat-session-delete,
 .chat-session:focus-within .chat-session-delete {
   opacity: 1;
+}
+
+.chat-session-delete:hover {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
 }
 
 .chat-session-delete:hover {
@@ -901,6 +1027,70 @@ tbody tr:last-child td {
 .chat-topbar-help:hover {
   border-color: var(--brand);
   color: var(--brand);
+}
+
+.chat-topbar-admin {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.chat-topbar-gear {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-topbar-gear:hover {
+  border-color: var(--brand);
+}
+
+.chat-topbar-admin-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.chat-topbar-admin-menu button {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chat-topbar-admin-menu button:hover {
+  background: var(--surface-2);
+}
+
+.chat-topbar-admin-menu-label {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.chat-topbar-admin-menu-label:not(:first-child) {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
 }
 
 /* ---------------------------------------------- ลากไฟล์มาวาง */
@@ -1606,57 +1796,102 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 
+.sidebar-mobile-toggle,
+.sidebar-mobile-close,
+.sidebar-backdrop {
+  display: none;
+}
+
 @media (max-width: 900px) {
-  .app-shell {
-    flex-direction: column;
-  }
-
-  .sidebar {
-    width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    padding: 10px;
-    gap: 6px;
-  }
-
-  .sidebar-brand,
-  .sidebar-section {
-    display: none;
-  }
-
-  .sidebar-footer {
-    position: relative;
-    margin: 0 0 0 auto;
-    padding: 0;
-    border: none;
+  /* The sidebar becomes an off-canvas drawer instead of squeezing everything into a top
+     bar — that hid the whole chat-history list on phones. Layout markup stays identical
+     to desktop; only how the <nav> is positioned changes. */
+  .sidebar-mobile-toggle {
     display: flex;
     align-items: center;
-    gap: 10px;
-  }
-
-  .sidebar-meta {
-    display: none;
-  }
-
-  .sidebar-help {
-    display: none;
-  }
-
-  .sidebar-user-row {
-    width: auto;
-  }
-
-  .sidebar-user-menu {
-    position: absolute;
-    top: 100%;
-    right: 10px;
-    z-index: 20;
+    justify-content: center;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 45;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 16px;
     box-shadow: var(--shadow);
   }
 
-  .chat-sessions {
-    width: 200px;
+  .sidebar-mobile-close {
+    display: block;
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: #94a3b8;
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .sidebar-mobile-close:hover {
+    background: var(--sidebar-hover);
+    color: #fff;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgb(15 23 42 / 45%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+
+  .sidebar-backdrop.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 40;
+    width: 280px;
+    max-width: 84vw;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-collapse-btn {
+    display: none;
+  }
+
+  .app-shell {
+    position: relative;
+  }
+
+  /* Room for the fixed hamburger button at top-left, on every page under this layout. */
+  .chat-topbar {
+    padding-left: 58px;
+  }
+
+  .page {
+    padding-top: 58px;
   }
 }
 
