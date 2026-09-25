@@ -42,6 +42,7 @@ public static class AuditActions
     public const string ChatFlagged = "CHAT_FLAGGED";
     public const string ChatFailed = "CHAT_FAILED";
     public const string SessionDeleted = "SESSION_DELETED";
+    public const string SessionMovedToProject = "SESSION_MOVED_TO_PROJECT";
 
     public const string FileUploaded = "FILE_UPLOADED";
     public const string FileRejected = "FILE_REJECTED";

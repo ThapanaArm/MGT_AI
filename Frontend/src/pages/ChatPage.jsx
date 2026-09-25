@@ -101,6 +101,11 @@ export default function ChatPage() {
   const [refreshingDataSource, setRefreshingDataSource] = useState(false);
   const [sessionSearch, setSessionSearch] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
+  const [showSaveProject, setShowSaveProject] = useState(false);
+  const [saveProjectName, setSaveProjectName] = useState('');
+  const [saveProjectInstructions, setSaveProjectInstructions] = useState('');
+  const [savingProject, setSavingProject] = useState(false);
+  const [saveProjectError, setSaveProjectError] = useState(null);
 
   const bottomRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -398,6 +403,39 @@ export default function ChatPage() {
     }
   }
 
+  function openSaveProject() {
+    setSaveProjectName(activeSession?.title ?? '');
+    setSaveProjectInstructions('');
+    setSaveProjectError(null);
+    setShowSaveProject(true);
+  }
+
+  async function handleSaveAsProject(event) {
+    event.preventDefault();
+    if (!activeSessionId || savingProject) return;
+
+    setSavingProject(true);
+    setSaveProjectError(null);
+
+    try {
+      const project = await api('/api/projects', {
+        method: 'POST',
+        body: { name: saveProjectName, instructions: saveProjectInstructions || null, isShared: false },
+      });
+      await api(`/api/chat/sessions/${activeSessionId}/project`, {
+        method: 'PUT',
+        body: { projectId: project.projectId },
+      });
+      setShowSaveProject(false);
+      setNotice(`Moved this conversation into the new project "${project.name}"`);
+      await loadSessions();
+    } catch (err) {
+      setSaveProjectError(err.message);
+    } finally {
+      setSavingProject(false);
+    }
+  }
+
   async function openAttachment(attachment) {
     try {
       await download(`/api/chat/attachments/${attachment.attachmentId}`, attachment.fileName);
@@ -521,6 +559,12 @@ export default function ChatPage() {
             </span>
           ) : (
             <span />
+          )}
+
+          {activeSessionId && !activeSession?.projectId && (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={openSaveProject}>
+              📁 Save as Project
+            </button>
           )}
 
           {isAdmin || canReadLogs ? (
@@ -998,6 +1042,57 @@ export default function ChatPage() {
 
         <div className="chat-footnote">AI can make mistakes. Please verify the sources.</div>
       </div>
+
+      {showSaveProject && (
+        <div className="modal-backdrop" onClick={() => !savingProject && setShowSaveProject(false)}>
+          <form className="modal-card" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveAsProject}>
+            <div className="card-title">Save this chat as a Project</div>
+            <p className="faint">
+              Creates a new project and moves this entire conversation into it — its history stays
+              intact, and any further messages in it will use the project's instructions/files.
+            </p>
+
+            {saveProjectError && <div className="alert alert-danger">{saveProjectError}</div>}
+
+            <div className="field field-wide">
+              <label htmlFor="saveProjectName">Project name</label>
+              <input
+                id="saveProjectName"
+                value={saveProjectName}
+                onChange={(e) => setSaveProjectName(e.target.value)}
+                maxLength={150}
+                required
+                autoFocus
+              />
+            </div>
+
+            <div className="field field-wide">
+              <label htmlFor="saveProjectInstructions">Instructions (optional)</label>
+              <textarea
+                id="saveProjectInstructions"
+                rows={4}
+                value={saveProjectInstructions}
+                onChange={(e) => setSaveProjectInstructions(e.target.value)}
+                placeholder="How should the AI treat future messages in this project?"
+              />
+            </div>
+
+            <div className="field field-wide row-actions">
+              <button type="submit" className="btn btn-primary" disabled={savingProject || !saveProjectName.trim()}>
+                {savingProject ? 'Saving…' : 'Create project & move chat'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={savingProject}
+                onClick={() => setShowSaveProject(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

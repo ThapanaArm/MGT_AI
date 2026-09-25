@@ -1124,6 +1124,36 @@ tbody tr:last-child td {
   margin-bottom: 6px;
 }
 
+/* ---------------------------------------------- modal ทั่วไป */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgb(15 23 42 / 45%);
+  padding: 20px;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 50px rgb(15 23 42 / 25%);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-card .card-title {
+  margin-bottom: 0;
+}
+
 .msg-files,
 .pending-files {
   display: flex;

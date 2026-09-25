@@ -200,4 +200,11 @@ public class ChatController(
         await chat.DeleteSessionAsync(sessionId, User.GetUserId(), ct);
         return NoContent();
     }
+
+    /// <summary>Moves one of your own conversations into a project you own — "save this chat as a Project".</summary>
+    [HttpPut("sessions/{sessionId:guid}/project")]
+    [ProducesResponseType(typeof(ChatSessionDto), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ChatSessionDto>> SetSessionProject(
+        Guid sessionId, SetSessionProjectRequest request, CancellationToken ct)
+        => Ok(await chat.SetSessionProjectAsync(sessionId, User.GetUserId(), request.ProjectId, ct));
 }

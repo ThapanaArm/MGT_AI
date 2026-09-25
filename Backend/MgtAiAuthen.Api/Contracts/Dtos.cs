@@ -172,6 +172,9 @@ public record ChatSessionDto(
     DateTime CreatedAt,
     DateTime UpdatedAt);
 
+/// <summary>Moves an existing conversation into a project the caller owns — see ChatService.SetSessionProjectAsync.</summary>
+public record SetSessionProjectRequest(int ProjectId);
+
 // ---------------------------------------------------------------- ค้นหา Chat log
 
 /// <summary>

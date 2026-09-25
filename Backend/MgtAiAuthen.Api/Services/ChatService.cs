@@ -26,6 +26,16 @@ public interface IChatService
 
     Task DeleteSessionAsync(Guid sessionId, int userId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Moves an existing conversation into a project the caller owns — for "save this finished
+    /// chat as a Project". A session's ProjectId is read fresh on every message send (see
+    /// BuildHistoryAsync/BuildSystemPromptAsync), so this is safe to change after the fact: past
+    /// messages are unaffected, and any further turns in this session pick up the project's
+    /// instructions/files from here on.
+    /// </summary>
+    Task<ChatSessionDto> SetSessionProjectAsync(
+        Guid sessionId, int userId, int projectId, CancellationToken ct = default);
+
     /// <summary>Owner sees it always; Admin/Auditor see any session's status for oversight.</summary>
     Task<DataSourceFetchStatusDto> GetDataSourceStatusAsync(
         Guid sessionId, int userId, bool canReadAllLogs, CancellationToken ct = default);
@@ -359,6 +369,48 @@ public class ChatService(
 
         await audit.LogAsync(AuditCategories.Chat, AuditActions.SessionDeleted, userId, username,
             $"Hid conversation {sessionId} (messages remain in the log)", isSuccess: true, ct);
+    }
+
+    public async Task<ChatSessionDto> SetSessionProjectAsync(
+        Guid sessionId, int userId, int projectId, CancellationToken ct = default)
+    {
+        ChatSession session = await db.ChatSessions.FirstOrDefaultAsync(s => s.SessionId == sessionId, ct)
+            ?? throw AppException.NotFound("Conversation not found");
+
+        if (session.UserId != userId)
+        {
+            throw AppException.Forbidden("You can only move your own conversations");
+        }
+
+        Project project = await db.Projects.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.ProjectId == projectId && !p.IsDeleted, ct)
+            ?? throw AppException.NotFound("Project not found");
+
+        if (project.OwnerUserId != userId)
+        {
+            throw AppException.Forbidden("You can only move a conversation into a project you own");
+        }
+
+        session.ProjectId = project.ProjectId;
+        session.UpdatedAt = DateTime.Now;
+        await db.SaveChangesAsync(ct);
+
+        string? username = await db.Users.Where(u => u.UserId == userId)
+            .Select(u => u.Username).FirstOrDefaultAsync(ct);
+
+        await audit.LogAsync(AuditCategories.Chat, AuditActions.SessionMovedToProject, userId, username,
+            $"Moved conversation {sessionId} into project \"{project.Name}\" ({project.ProjectId})",
+            isSuccess: true, ct);
+
+        return await db.ChatSessions
+            .AsNoTracking()
+            .Where(s => s.SessionId == sessionId)
+            .Select(s => new ChatSessionDto(
+                s.SessionId, s.Title, s.MessageCount,
+                s.ProjectId, s.Project == null ? null : s.Project.Name,
+                s.DataSourceId, s.DataSource == null ? null : s.DataSource.SourceName,
+                s.CreatedAt, s.UpdatedAt))
+            .FirstAsync(ct);
     }
 
     public async Task<DataSourceFetchStatusDto> GetDataSourceStatusAsync(
