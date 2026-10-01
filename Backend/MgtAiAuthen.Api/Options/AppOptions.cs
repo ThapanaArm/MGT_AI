@@ -144,6 +144,31 @@ public class OpenAiOptions
     public int TimeoutSeconds { get; set; } = 120;
 }
 
+/// <summary>Alibaba Cloud Model Studio (DashScope) — Qwen models, called via its OpenAI-compatible chat completions endpoint.</summary>
+public class QwenOptions
+{
+    public const string SectionName = "Qwen";
+
+    /// <summary>Read from appsettings or the QWEN_API_KEY environment variable.</summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>โมเดลที่ใช้เมื่อผู้เรียกไม่ได้ระบุ — ต้องมีราคาในตาราง ModelPricing ด้วย</summary>
+    public string Model { get; set; } = "qwen-plus";
+
+    public int MaxTokens { get; set; } = 16000;
+
+    /// <summary>
+    /// ค่านี้ผูกกับ region/workspace ที่ใช้สร้าง API key — Model Studio API key ใช้ได้เฉพาะ
+    /// endpoint ของ region เดียวกับตอนสร้าง (401 ถ้าไม่ตรง) ถ้า key ผูกกับ workspace เฉพาะ
+    /// (ดูจากหน้า console ตอนสร้าง key) ให้ใส่ URL เต็มแบบ
+    /// https://{WorkspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1 แทนค่าเริ่มต้นนี้
+    /// </summary>
+    public string BaseUrl { get; set; } = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+
+    /// <summary>วินาทีที่รอคำตอบก่อนถือว่า timeout</summary>
+    public int TimeoutSeconds { get; set; } = 120;
+}
+
 /// <summary>นโยบายรหัสผ่านและการล็อกบัญชี (ผูกกับ section "Security")</summary>
 public class SecurityOptions
 {

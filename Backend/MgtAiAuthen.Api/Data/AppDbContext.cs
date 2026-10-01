@@ -22,6 +22,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Skill> Skills => Set<Skill>();
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
     public DbSet<ChatSessionDataFetch> ChatSessionDataFetches => Set<ChatSessionDataFetch>();
+    public DbSet<RagChunk> RagChunks => Set<RagChunk>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -270,6 +271,27 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.Property(x => x.UpdatedBy).HasColumnName("UpdatedBy").HasMaxLength(100);
             e.HasIndex(x => x.SourceName).IsUnique();
+        });
+
+        b.Entity<RagChunk>(e =>
+        {
+            e.ToTable("RagChunks");
+            e.HasKey(x => x.ChunkId);
+            e.Property(x => x.ChunkId).HasColumnName("ChunkId");
+            e.Property(x => x.SourceId).HasColumnName("SourceId");
+            e.Property(x => x.ChunkKey).HasColumnName("ChunkKey").HasMaxLength(100).IsRequired();
+            e.Property(x => x.ChunkText).HasColumnName("ChunkText").IsRequired();
+            e.Property(x => x.SourceFile).HasColumnName("SourceFile").HasMaxLength(260);
+            e.Property(x => x.PageStart).HasColumnName("PageStart");
+            e.Property(x => x.PageEnd).HasColumnName("PageEnd");
+            e.Property(x => x.Chapter).HasColumnName("Chapter").HasMaxLength(500);
+            e.Property(x => x.Section).HasColumnName("Section").HasMaxLength(500);
+            e.Property(x => x.TokenCountEstimate).HasColumnName("TokenCountEstimate");
+            e.Property(x => x.Embedding).HasColumnName("Embedding").IsRequired();
+            e.Property(x => x.EmbeddingModel).HasColumnName("EmbeddingModel").HasMaxLength(100).IsRequired();
+            e.Property(x => x.CreatedAt).HasColumnName("CreatedAt");
+            e.HasOne(x => x.Source).WithMany().HasForeignKey(x => x.SourceId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.SourceId);
         });
 
         b.Entity<DataSourceGrant>(e =>

@@ -963,9 +963,9 @@ Admin/IT ลงทะเบียนแหล่งข้อมูลไว้�
 | **API** | SAP OData, ระบบภายในที่มี REST API | **ได้จริง** — ยิง HTTP ไปที่ baseUrl พร้อม auth ที่ตั้งไว้ |
 | **SharePoint** | ไซต์เอกสารของแผนก | **ได้จริง** — OAuth2 client-credentials กับ Entra ID แล้วเรียก Microsoft Graph |
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | โฟลเดอร์แชร์บน server, UNC path | **ได้จริง** — ตรวจว่าโฟลเดอร์มีอยู่และเซิร์ฟเวอร์อ่านได้ |
-| **Data Lake / Lakehouse** | Microsoft Fabric — semantic model (Power BI) หรือ Warehouse/Lakehouse (SQL) | **ได้จริง** — OAuth2 client-credentials กับ Entra ID (คนละ scope ต่อโหมด) แล้วรัน DAX ผ่าน Power BI REST API หรือ T-SQL ผ่าน SQL endpoint |
+| **Data Lake / Lakehouse** | Microsoft Fabric — semantic model (Power BI), Warehouse/Lakehouse (SQL), หรือ API for GraphQL | **ได้จริง** — OAuth2 client-credentials กับ Entra ID (คนละ scope ต่อโหมด) แล้วรัน DAX ผ่าน Power BI REST API, T-SQL ผ่าน SQL endpoint, หรือ query ผ่าน GraphQL endpoint |
 
-**Data Lake ต่อ Microsoft Fabric ได้สองแบบ**, เลือกต่อ source ผ่านฟิลด์ `connectionMode`:
+**Data Lake ต่อ Microsoft Fabric ได้สามแบบ**, เลือกต่อ source ผ่านฟิลด์ `connectionMode`:
 
 1. **`PowerBi` (ค่า default)** — ยิง DAX query ไปที่ **Power BI REST API's Execute Queries
    endpoint** (`POST /v1.0/myorg/datasets/{id}/executeQueries`) โดยใช้ token แบบ client-credentials
@@ -978,15 +978,24 @@ Admin/IT ลงทะเบียนแหล่งข้อมูลไว้�
    ที่ตั้งไว้ตรง ๆ ผลลัพธ์ถูกแปลงเป็นตาราง Markdown ก่อนส่งให้ AI ตั้งค่าที่ต้องกรอกเพิ่ม:
    `sqlEndpoint` (โฮสต์เนมล้วน เช่น `xxxx.datawarehouse.fabric.microsoft.com` — ไม่ต้องใส่ `tcp:`
    หรือ port), `database` (ชื่อ warehouse/lakehouse), `sqlQuery` (คำสั่ง SELECT ที่จะรันทุกครั้ง)
+3. **`GraphQL`** — ยิง query ไปที่ **Fabric "API for GraphQL"** item ตรง ๆ (`POST` ไปที่ URL ของ
+   endpoint นั้นเอง — endpoint นี้ผู้ใช้ต้อง copy มาเองจากหน้า item ใน Fabric portal, ระบบไม่ได้
+   สร้าง URL เองเหมือนสองโหมดข้างบน) ด้วย token แบบ client-credentials คนละ scope อีกเช่นกัน —
+   `EntraAuth.FabricScope` = `https://api.fabric.microsoft.com/.default` (ยืนยันจากเอกสาร
+   Microsoft: `fabric/data-engineering/api-graphql-service-principal`) body เป็น
+   `{ query, variables }` แบบมาตรฐาน GraphQL ตั้งค่าที่ต้องกรอกเพิ่ม: `graphqlEndpoint` (URL เต็ม),
+   `graphqlQuery`, `graphqlVariables` (JSON, ไม่บังคับ) — ถ้า response มี `errors` array (HTTP 200
+   แต่ query ผิด) ถือเป็นความล้มเหลวเหมือนกัน ไม่ใช่แค่เช็ค HTTP status code
 
-ทั้งสองโหมดใช้ `tenantId`, `clientId` (Entra app) และ Secret (client secret ของ Entra app) ร่วมกัน —
+ทั้งสามโหมดใช้ `tenantId`, `clientId` (Entra app) และ Secret (client secret ของ Entra app) ร่วมกัน —
 source ที่สร้างไว้ก่อนมีฟิลด์นี้ (ไม่มี `connectionMode` เลย) ยังทำงานเหมือนเดิมทุกประการ (เท่ากับ
 `PowerBi` โดย default)
 
-**สองเงื่อนไขที่ระบบตรวจให้ไม่ได้ ต้องให้ IT/Fabric admin จัดการเอง (ทั้งสองโหมด):**
+**สองเงื่อนไขที่ระบบตรวจให้ไม่ได้ ต้องให้ IT/Fabric admin จัดการเอง (ทั้งสามโหมด):**
 1. Entra ID app registration ต้องมีสิทธิ์ที่ถูกต้อง — Power BI Service API (เช่น
-   `Dataset.Read.All`) สำหรับโหมด `PowerBi`, หรือสิทธิ์อ่านข้อมูลใน SQL endpoint นั้น (grant ให้
-   service principal โดยตรง) สำหรับโหมด `Warehouse`
+   `Dataset.Read.All`) สำหรับโหมด `PowerBi`, สิทธิ์อ่านข้อมูลใน SQL endpoint นั้น (grant ให้
+   service principal โดยตรง) สำหรับโหมด `Warehouse`, หรือสิทธิ์ Execute ("Run Queries and
+   Mutations") บน item นั้นสำหรับโหมด `GraphQL`
 2. Fabric admin ต้องเปิด **"Allow service principals to use Fabric APIs"** ในหน้า Fabric admin
    portal (ทั้ง tenant หรือจำกัดเฉพาะ security group ก็ได้) — ถ้าไม่เปิด Fabric จะปฏิเสธทุก
    client-credentials call เงียบ ๆ ด้วย 401/403 โดยไม่บอกสาเหตุ ซึ่งข้อความ error ของ connector
@@ -1055,12 +1064,23 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 
 ### จังหวะการดึงข้อมูล
 
-- **ดึงครั้งเดียวตอนเริ่มบทสนทนา** แล้วแคชผลไว้ที่ตาราง `ChatSessionDataFetches`
-  (หนึ่งแถวต่อหนึ่งบทสนทนา) — ทุกข้อความถัดไปในบทสนทนาเดียวกันใช้ผลที่แคชไว้ซ้ำ
-  ไม่ได้ยิงไปที่ปลายทางจริงซ้ำทุกครั้งที่พิมพ์คำถาม (เร็วกว่าและไม่เปลืองโควต้า API ปลายทาง)
-- ผู้ใช้กดปุ่ม **"Refresh"** ที่แถบสถานะเหนือกล่องแชทเพื่อดึงข้อมูลใหม่ได้เอง — เขียนทับแถว
-  เดิม ไม่เก็บประวัติการดึงแยก (audit log มี `DATASOURCE_FETCHED`/`DATASOURCE_FETCH_FAILED`
-  ให้ไล่ย้อนดูอยู่แล้วว่าใครดึง/รีเฟรชเมื่อไหร่)
+- **ดึงใหม่ทุกข้อความ** (ไม่ใช่ครั้งเดียวตอนเริ่มบทสนทนาเหมือนก่อนหน้านี้) แล้วเขียนทับแถว
+  เดิมในตาราง `ChatSessionDataFetches` (หนึ่งแถวต่อหนึ่งบทสนทนา) — ข้อมูลที่ใช้ตอบจึงไม่มีวัน
+  เก่ากว่าหนึ่งข้อความ
+- สำหรับ source โหมด `Warehouse` ที่ `sqlQuery` เป็นหลาย statement ต่อกันด้วย `;` (ดูหัวข้อ
+  "มากกว่า 1 Query" ด้านล่าง) — **ก่อนดึงทุกครั้ง AI จะอ่านคำถามปัจจุบันแล้วเลือกเองว่า
+  statement ไหนเกี่ยวข้อง** รันเฉพาะ statement ที่เลือก แทนที่จะรันทั้งหมดเสมอ ประหยัดทั้งเวลา
+  และจำนวนตัวอักษรที่ต้องส่งเข้า context ของ AI อย่างมีนัยสำคัญ (ตัวอย่างจริง: คำถามเรื่องยอด
+  รวมดึงมาแค่ 1 แถว 35 ตัวอักษร จากเดิมที่ต้องดึงทั้งก้อนหลายพันแถวทุกครั้ง) ถ้าคำถามกว้างจน AI
+  ตัดสินใจไม่ได้ว่า statement ไหนตรง (ตอบ "0" หรือ parse ไม่ได้) หรือ AI เรียกไม่สำเร็จ ระบบจะ
+  fallback ไปรันทุก statement เหมือนเดิมเสมอ — ไม่มีทางได้ "ไม่ดึงอะไรเลย" จากขั้นตอนนี้ ขั้นตอน
+  เลือกนี้ใช้ได้เฉพาะ grant แบบ `Full` เท่านั้น — grant ที่มี scope filter ของตัวเอง (`OwnDepartment`/
+  `Custom`) จะใช้ scope filter แทนเสมอ เพราะเป็นขอบเขตความปลอดภัยที่ต้องชนะทุกกรณี
+- ผู้ใช้กดปุ่ม **"Refresh"** ที่แถบสถานะเหนือกล่องแชทเพื่อดึงข้อมูลใหม่ได้เองเช่นกัน — ต่างจาก
+  การดึงอัตโนมัติข้างต้นตรงที่ "Refresh" ไม่ผ่านขั้นตอนเลือก statement จึงรันทุก statement
+  เสมอ (ปุ่มนี้คือ "ขอดูข้อมูลทั้งหมดล่าสุด" ไม่ใช่ "ตอบคำถามนี้") — ไม่เก็บประวัติการดึงแยก
+  (audit log มี `DATASOURCE_FETCHED`/`DATASOURCE_FETCH_FAILED` ให้ไล่ย้อนดูอยู่แล้วว่าใคร
+  ดึง/รีเฟรชเมื่อไหร่)
 - ผูก Data Source กับบทสนทนาตอนสร้างเท่านั้น เปลี่ยนภายหลังไม่ได้ — เหตุผลเดียวกับ ProjectId
 
 ### กลไกส่งเข้า AI — ใช้ของเดิมที่มีอยู่แล้วทั้งหมด
@@ -1077,7 +1097,7 @@ constraint ของฐานข้อมูล (แบบเดียวกั�
 | **โฟลเดอร์ในเครื่อง/เครือข่าย** | อ่านไฟล์ `.txt/.csv/.md/.json/.log/.xlsx/.xls` ทุกไฟล์ใต้ path ที่ตั้งไว้ (หรือใต้ path ย่อยตาม scope filter) แปลงเป็นข้อความต่อกัน — Excel ใช้ตัวแปลงเดียวกับไฟล์แนบในแชท |
 | **API** | ยิงตาม `method` ที่ตั้งไว้ (`GET` ค่าเริ่มต้น หรือ `POST` พร้อม `requestBody`) ไปที่ `baseUrl` ด้วย auth ที่ตั้งไว้ (เหมือนตอน Test connection) ต่อ scope filter เป็น query string ท้าย URL แล้วส่ง response body ทั้งก้อนเป็นข้อความให้ AI |
 | **SharePoint** | sign-in แบบ client-credentials เดียวกับ Test connection แล้วเรียก Microsoft Graph ไล่อ่านไฟล์ในไลบรารีเอกสารของไซต์ (หรือใต้โฟลเดอร์ย่อยตาม scope filter) |
-| **Data Lake / Lakehouse** | sign-in แบบ client-credentials เดียวกับ SharePoint (คนละ scope ต่อโหมด) แล้วรันตาม `connectionMode`: **`PowerBi`** — `daxQuery` ผ่าน Power BI Execute Queries API ส่ง JSON ผลลัพธ์ทั้งก้อนเป็นข้อความให้ AI; **`Warehouse`** — `sqlQuery` ผ่าน SQL endpoint ของ Fabric Warehouse/Lakehouse ตรง ๆ ด้วย `Microsoft.Data.SqlClient` แปลงผลลัพธ์เป็นตาราง Markdown ก่อนส่งให้ AI — ทั้งสองโหมด scope filter (ถ้ามี) จะ**แทนที่** query เดิมทั้งหมด แทนที่จะต่อท้าย เพราะทั้ง DAX และ SQL ที่พิมพ์เองไม่มีวากยสัมพันธ์ "เติม filter เข้าไปในคำสั่งเดิม" แบบ query string ของ URL |
+| **Data Lake / Lakehouse** | sign-in แบบ client-credentials เดียวกับ SharePoint (คนละ scope ต่อโหมด) แล้วรันตาม `connectionMode`: **`PowerBi`** — `daxQuery` ผ่าน Power BI Execute Queries API ส่ง JSON ผลลัพธ์ทั้งก้อนเป็นข้อความให้ AI; **`Warehouse`** — `sqlQuery` ผ่าน SQL endpoint ของ Fabric Warehouse/Lakehouse ตรง ๆ ด้วย `Microsoft.Data.SqlClient` แปลงผลลัพธ์เป็นตาราง Markdown ก่อนส่งให้ AI; **`GraphQL`** — `graphqlQuery` (+ `graphqlVariables` ถ้ามี) ผ่าน `graphqlEndpoint` ที่ตั้งไว้ตรง ๆ ส่ง JSON response ทั้งก้อนเป็นข้อความให้ AI (ถือว่าล้มเหลวถ้า response มี `errors` array แม้ HTTP จะเป็น 200) — ทั้งสามโหมด scope filter (ถ้ามี) จะ**แทนที่** query เดิมทั้งหมด แทนที่จะต่อท้าย เพราะ DAX, SQL, และ GraphQL ที่พิมพ์เองไม่มีวากยสัมพันธ์ "เติม filter เข้าไปในคำสั่งเดิม" แบบ query string ของ URL |
 
 ทุกตัวมี **เพดานขนาด** กันข้อมูลก้อนใหญ่ทำให้บทสนทนาบวมเกินไป: อย่างมาก 30 ไฟล์และ
 120,000 ตัวอักษรต่อการดึงหนึ่งครั้ง (ไฟล์เดี่ยวเกิน 5 MB ถูกข้าม) เกินแล้วตัดพร้อมบอกผู้ใช้ว่า

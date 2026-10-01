@@ -2114,6 +2114,15 @@ tbody tr:last-child td {
   grid-column: 1 / -1;
 }
 
+.field-code {
+  width: 100%;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  resize: vertical;
+}
+
 .btn-link-danger {
   color: var(--danger);
 }

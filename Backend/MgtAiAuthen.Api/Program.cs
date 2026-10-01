@@ -22,6 +22,7 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<ClaudeOptions>(builder.Configuration.GetSection(ClaudeOptions.SectionName));
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection(GeminiOptions.SectionName));
 builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection(OpenAiOptions.SectionName));
+builder.Services.Configure<QwenOptions>(builder.Configuration.GetSection(QwenOptions.SectionName));
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(SecurityOptions.SectionName));
 builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection(UploadOptions.SectionName));
 
@@ -132,15 +133,16 @@ builder.Services.AddCors(options => options.AddPolicy(CorsPolicy, policy =>
 // ---------------------------------------------------------------- บริการของแอป
 
 builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
-// Three AI vendors behind one router. Registering each as IAiProvider means adding a fourth
+// Four AI vendors behind one router. Registering each as IAiProvider means adding a fifth
 // vendor is a new class plus one line here — ChatService does not change.
 builder.Services.AddSingleton<IAiProvider, ClaudeClient>();
 builder.Services.AddSingleton<IAiProvider, GeminiClient>();
 builder.Services.AddSingleton<IAiProvider, OpenAiClient>();
+builder.Services.AddSingleton<IAiProvider, QwenClient>();
 builder.Services.AddSingleton<IAiClient, AiClient>();
 
-// Gemini and OpenAI are called over plain HTTP, so they need pooled handlers rather than a new
-// HttpClient per call (socket exhaustion) or one static instance (stale DNS).
+// Gemini, OpenAI, and Qwen are called over plain HTTP, so they need pooled handlers rather than
+// a new HttpClient per call (socket exhaustion) or one static instance (stale DNS).
 builder.Services.AddHttpClient(GeminiClient.HttpClientName, (services, client) =>
 {
     GeminiOptions gemini = services.GetRequiredService<IOptions<GeminiOptions>>().Value;
@@ -151,6 +153,12 @@ builder.Services.AddHttpClient(OpenAiClient.HttpClientName, (services, client) =
 {
     OpenAiOptions openAi = services.GetRequiredService<IOptions<OpenAiOptions>>().Value;
     client.Timeout = TimeSpan.FromSeconds(openAi.TimeoutSeconds);
+});
+
+builder.Services.AddHttpClient(QwenClient.HttpClientName, (services, client) =>
+{
+    QwenOptions qwen = services.GetRequiredService<IOptions<QwenOptions>>().Value;
+    client.Timeout = TimeSpan.FromSeconds(qwen.TimeoutSeconds);
 });
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IPolicyService, PolicyService>();
@@ -182,6 +190,12 @@ builder.Services.AddSingleton<IDataSourceFetcher, LocalFolderFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, ApiFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, SharePointFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, PowerBiFetcher>();
+// Scoped, not Singleton like the testers/fetchers above — this one needs AppDbContext directly
+// (its "config" is imported RagChunks rows, not a URL/tenant it can test statelessly).
+builder.Services.AddScoped<IDataSourceConnectionTester, RagConnectionTester>();
+builder.Services.AddScoped<IDataSourceFetcher, RagFetcher>();
+builder.Services.AddSingleton<IEmbeddingService, OpenAiEmbeddingService>();
+builder.Services.AddScoped<IRagImportService, RagImportService>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
 // Self-service Projects and Skills — any signed-in employee, not just Admin.

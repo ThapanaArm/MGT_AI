@@ -655,10 +655,18 @@ export default function ChatPage() {
           {notice && <div className="alert alert-warn">{notice}</div>}
 
           {dataSourceStatus && (
-            <div className={`alert ${dataSourceStatus.success ? 'alert-ok' : 'alert-warn'}`}>
+            <div className={`alert ${dataSourceStatus.success && !dataSourceStatus.truncated ? 'alert-ok' : 'alert-warn'}`}>
               <strong>🔌 {dataSourceStatus.sourceName}</strong> — {dataSourceStatus.message}
               {dataSourceStatus.success && dataSourceStatus.charCount > 0 && (
-                <> ({dataSourceStatus.charCount.toLocaleString()} characters{dataSourceStatus.truncated ? ', truncated' : ''})</>
+                <> ({dataSourceStatus.charCount.toLocaleString()} characters)</>
+              )}
+              {dataSourceStatus.success && dataSourceStatus.truncated && (
+                <div>
+                  ⚠️ This only covers part of the data — the rest was cut off because it's too
+                  large to fit in one fetch. Counts/totals here may not reflect everything; ask
+                  for an aggregate (COUNT/SUM) query, or narrow the source's own SQL query, to get
+                  an exact figure.
+                </div>
               )}
               {' · '}fetched {formatTime(dataSourceStatus.fetchedAt)}
               {' · '}

@@ -294,17 +294,19 @@ public class SharePointConnectionTester(IHttpClientFactory httpClientFactory) : 
 }
 
 /// <summary>
-/// The "Data Lake / Lakehouse" type covers two different ways of reading from Microsoft Fabric,
+/// The "Data Lake / Lakehouse" type covers three different ways of reading from Microsoft Fabric,
 /// chosen per source via the "connectionMode" config key (see <see cref="DataLakeMode"/>):
-/// a Power BI / Fabric "Semantic model" queried with DAX through the Power BI REST API, or a
-/// Fabric Warehouse/Lakehouse SQL analytics endpoint queried with plain T-SQL. Both authenticate
-/// the same way — client-credentials OAuth2 against Entra ID (same flow as SharePoint, different
-/// scope/token audience) — so this tester acquires the token once and hands off to whichever
+/// a Power BI / Fabric "Semantic model" queried with DAX through the Power BI REST API, a Fabric
+/// Warehouse/Lakehouse SQL analytics endpoint queried with plain T-SQL, or a Fabric "API for
+/// GraphQL" item queried with a GraphQL document. All three authenticate the same way —
+/// client-credentials OAuth2 against Entra ID (same flow as SharePoint, different scope/token
+/// audience per surface) — so this tester acquires the token once and hands off to whichever
 /// query engine the mode calls for.
 ///
-/// Two prerequisites this app cannot satisfy from code, for either mode: the Entra ID app
+/// Two prerequisites this app cannot satisfy from code, for every mode: the Entra ID app
 /// registration needs the right API permission (Power BI Service API, e.g. Dataset.Read.All, for
-/// PowerBi mode — SQL-level access granted to the service principal for Warehouse mode), and a
+/// PowerBi mode — SQL-level access granted to the service principal for Warehouse mode — Execute
+/// permission, i.e. "Run Queries and Mutations", on the GraphQL item for GraphQL mode), and a
 /// Fabric admin must enable "Allow service principals to use Fabric APIs" (or a security-group-
 /// scoped version of it) in the Fabric admin portal — Fabric rejects every service-principal call
 /// with no such error message until that switch is on, so a persistent 401/403 here usually means
@@ -329,12 +331,23 @@ public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDa
 
         HttpClient http = httpClientFactory.CreateClient(HttpClientName);
 
-        if (DataLakeMode.Resolve(config) == DataLakeMode.Warehouse)
+        string mode = DataLakeMode.Resolve(config);
+
+        if (mode == DataLakeMode.Warehouse)
         {
             FabricWarehouseQueryResult wh = await FabricWarehouseQuery.ExecuteAsync(
                 http, tenantId, clientId, secret, config, sqlOverride: null, ct);
             return new DataSourceTestResult(wh.Success,
                 wh.Success ? $"Connected — the query returned {wh.RowCount} row(s)." : wh.Message,
+                DateTime.Now);
+        }
+
+        if (mode == DataLakeMode.GraphQL)
+        {
+            FabricGraphQlResult gql = await FabricGraphQlQuery.ExecuteAsync(
+                http, tenantId, clientId, secret, config, queryOverride: null, ct);
+            return new DataSourceTestResult(gql.Success,
+                gql.Success ? "Connected — the GraphQL query returned a response with no errors." : gql.Message,
                 DateTime.Now);
         }
 
@@ -367,11 +380,15 @@ internal static class DataLakeMode
 {
     public const string PowerBi = "PowerBi";
     public const string Warehouse = "Warehouse";
+    public const string GraphQL = "GraphQL";
 
     public static string Resolve(Dictionary<string, string> config)
-        => string.Equals(config.GetValueOrDefault("connectionMode", ""), Warehouse, StringComparison.OrdinalIgnoreCase)
-            ? Warehouse
-            : PowerBi;
+    {
+        string mode = config.GetValueOrDefault("connectionMode", "");
+        if (string.Equals(mode, Warehouse, StringComparison.OrdinalIgnoreCase)) return Warehouse;
+        if (string.Equals(mode, GraphQL, StringComparison.OrdinalIgnoreCase)) return GraphQL;
+        return PowerBi;
+    }
 }
 
 /// <summary>
@@ -388,6 +405,9 @@ internal static class EntraAuth
     // Fabric Warehouse/Lakehouse SQL endpoints sit on the same engine surface as Azure SQL, so they
     // accept the standard Azure SQL Database AAD audience — there is no separate Fabric-specific one.
     public const string SqlScope = "https://database.windows.net/.default";
+    // Fabric API for GraphQL uses its own audience, distinct from both of the above — confirmed
+    // against Microsoft's own service-principal guide (fabric/data-engineering/api-graphql-service-principal).
+    public const string FabricScope = "https://api.fabric.microsoft.com/.default";
 
     public static async Task<(string? Token, string? Error)> AcquireTokenAsync(
         HttpClient http, string tenantId, string clientId, string secret, CancellationToken ct,
@@ -517,9 +537,11 @@ internal static class PowerBiQuery
 internal record FabricWarehouseQueryResult(bool Success, string Message, string? FormattedText, int? RowCount, bool Truncated = false);
 
 /// <summary>
-/// Runs one T-SQL query against a Fabric Warehouse/Lakehouse SQL analytics endpoint and formats
-/// the result as a Markdown table (cheap to read, and the same shape <c>MessageContent.jsx</c>
-/// already renders nicely if it ever reaches the user verbatim). Shared by
+/// Runs one or more T-SQL statements — a plain semicolon-separated batch, e.g.
+/// "SELECT ... FROM A; SELECT ... FROM B;" — against a Fabric Warehouse/Lakehouse SQL analytics
+/// endpoint and formats every result set as its own Markdown table (cheap to read, and the same
+/// shape <c>MessageContent.jsx</c> already renders nicely if it ever reaches the user verbatim),
+/// numbered when there's more than one. Shared by
 /// <see cref="PowerBiConnectionTester"/> (reports row count) and
 /// <see cref="DataSourceFetchers.PowerBiFetcher"/> (hands the table to the AI) so "Test connection"
 /// runs the exact same query the real fetch would.
@@ -577,7 +599,7 @@ internal static class FabricWarehouseQuery
             };
 
             await using SqlDataReader reader = await command.ExecuteReaderAsync(ct);
-            return FormatAsMarkdownTable(reader, await ReadAllAsync(reader, ct));
+            return await FormatAllResultSetsAsync(reader, ct);
         }
         catch (SqlException ex)
         {
@@ -599,42 +621,75 @@ internal static class FabricWarehouseQuery
         return (comma >= 0 ? endpoint[..comma] : endpoint).Trim();
     }
 
-    private static async Task<List<object?[]>> ReadAllAsync(SqlDataReader reader, CancellationToken ct)
+    /// <summary>
+    /// "sqlQuery" may be a batch of several SELECT statements separated by semicolons — plain
+    /// ADO.NET already supports this (each SELECT produces its own result set, advanced through
+    /// with <see cref="SqlDataReader.NextResultAsync"/>); this just formats every result set as its
+    /// own Markdown table instead of only the first, numbering them when there's more than one.
+    /// A statement that produces no result set (FieldCount 0 — e.g. a leading "SET NOCOUNT ON;")
+    /// is skipped rather than emitting an empty table.
+    /// </summary>
+    private static async Task<FabricWarehouseQueryResult> FormatAllResultSetsAsync(
+        SqlDataReader reader, CancellationToken ct)
     {
-        var rows = new List<object?[]>();
-        while (rows.Count < DataSourceFetchLimits.MaxWarehouseRows && await reader.ReadAsync(ct))
+        var resultSets = new List<(string[] Columns, List<object?[]> Rows)>();
+
+        do
         {
-            var row = new object?[reader.FieldCount];
-            reader.GetValues(row!);
-            rows.Add(row);
-        }
-        return rows;
-    }
+            if (reader.FieldCount == 0) continue;
 
-    private static FabricWarehouseQueryResult FormatAsMarkdownTable(SqlDataReader reader, List<object?[]> rows)
-    {
-        int columnCount = reader.FieldCount;
-        string[] columns = Enumerable.Range(0, columnCount).Select(reader.GetName).ToArray();
-
-        var sb = new StringBuilder();
-        sb.Append("| ").Append(string.Join(" | ", columns)).Append(" |\n");
-        sb.Append("| ").Append(string.Join(" | ", columns.Select(_ => "---"))).Append(" |\n");
-
-        int written = 0;
-        bool truncated = false;
-        foreach (object?[] row in rows)
-        {
-            string line = "| " + string.Join(" | ", row.Select(FormatCell)) + " |\n";
-            if (sb.Length + line.Length > DataSourceFetchLimits.MaxChars)
+            string[] columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
+            var rows = new List<object?[]>();
+            while (rows.Count < DataSourceFetchLimits.MaxWarehouseRows && await reader.ReadAsync(ct))
             {
-                truncated = true;
-                break;
+                var row = new object?[reader.FieldCount];
+                reader.GetValues(row!);
+                rows.Add(row);
             }
-            sb.Append(line);
-            written++;
+            resultSets.Add((columns, rows));
+        }
+        while (await reader.NextResultAsync(ct));
+
+        if (resultSets.Count == 0)
+        {
+            return new FabricWarehouseQueryResult(true, "OK", "", 0, false);
         }
 
-        return new FabricWarehouseQueryResult(true, "OK", sb.ToString(), written, truncated);
+        bool multiple = resultSets.Count > 1;
+        var sb = new StringBuilder();
+        int totalWritten = 0;
+        bool truncated = false;
+
+        for (int i = 0; i < resultSets.Count && !truncated; i++)
+        {
+            (string[] columns, List<object?[]> rows) = resultSets[i];
+
+            if (multiple)
+            {
+                string header = $"### Query {i + 1}\n\n";
+                if (sb.Length + header.Length > DataSourceFetchLimits.MaxChars) { truncated = true; break; }
+                sb.Append(header);
+            }
+
+            sb.Append("| ").Append(string.Join(" | ", columns)).Append(" |\n");
+            sb.Append("| ").Append(string.Join(" | ", columns.Select(_ => "---"))).Append(" |\n");
+
+            foreach (object?[] row in rows)
+            {
+                string line = "| " + string.Join(" | ", row.Select(FormatCell)) + " |\n";
+                if (sb.Length + line.Length > DataSourceFetchLimits.MaxChars)
+                {
+                    truncated = true;
+                    break;
+                }
+                sb.Append(line);
+                totalWritten++;
+            }
+
+            if (multiple && !truncated) sb.Append('\n');
+        }
+
+        return new FabricWarehouseQueryResult(true, "OK", sb.ToString(), totalWritten, truncated);
     }
 
     private static string FormatCell(object? value)
@@ -642,4 +697,119 @@ internal static class FabricWarehouseQuery
             ? ""
             : (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "")
                 .Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
+}
+
+internal record FabricGraphQlResult(bool Success, string Message, string? RawJson);
+
+/// <summary>
+/// Runs one query against a Fabric "API for GraphQL" item — a plain HTTPS POST of
+/// <c>{ query, variables }</c> to the endpoint URL the admin copies from that item's own "Copy
+/// endpoint" button in the Fabric portal (this app has no way to construct that URL itself, unlike
+/// the Power BI/SQL endpoints which are built from a dataset/database name). Authenticates with
+/// client-credentials OAuth2 against Entra ID using <see cref="EntraAuth.FabricScope"/> — a
+/// different audience from both the Power BI and SQL surfaces, confirmed against Microsoft's own
+/// service-principal guide for this feature. Shared by <see cref="PowerBiConnectionTester"/>
+/// (reports whether the query came back error-free) and
+/// <see cref="DataSourceFetchers.PowerBiFetcher"/> (hands the raw JSON response to the AI).
+/// </summary>
+internal static class FabricGraphQlQuery
+{
+    public static async Task<FabricGraphQlResult> ExecuteAsync(
+        HttpClient http, string tenantId, string clientId, string secret,
+        Dictionary<string, string> config, string? queryOverride, CancellationToken ct)
+    {
+        string endpoint = config.GetValueOrDefault("graphqlEndpoint", "").Trim();
+        string query = string.IsNullOrWhiteSpace(queryOverride)
+            ? config.GetValueOrDefault("graphqlQuery", "").Trim()
+            : queryOverride.Trim();
+        string variablesRaw = config.GetValueOrDefault("graphqlVariables", "").Trim();
+
+        if (endpoint.Length == 0)
+        {
+            return new FabricGraphQlResult(false, "No GraphQL endpoint URL is configured.", null);
+        }
+
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? endpointUri))
+        {
+            return new FabricGraphQlResult(false, $"\"{endpoint}\" is not a valid absolute URL.", null);
+        }
+
+        if (query.Length == 0)
+        {
+            return new FabricGraphQlResult(false, "No GraphQL query is configured.", null);
+        }
+
+        object? variables = null;
+        if (variablesRaw.Length > 0)
+        {
+            try
+            {
+                variables = JsonSerializer.Deserialize<JsonElement>(variablesRaw);
+            }
+            catch (JsonException ex)
+            {
+                return new FabricGraphQlResult(false, $"\"graphqlVariables\" is not valid JSON: {ex.Message}", null);
+            }
+        }
+
+        (string? token, string? tokenError) = await EntraAuth.AcquireTokenAsync(
+            http, tenantId, clientId, secret, ct, EntraAuth.FabricScope);
+        if (token is null)
+        {
+            return new FabricGraphQlResult(false, tokenError!, null);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpointUri);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = new StringContent(
+            JsonSerializer.Serialize(new { query, variables }), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await http.SendAsync(request, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            string hint = response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden
+                ? " This usually means the service principal lacks Execute permission (\"Run Queries " +
+                  "and Mutations\") on this GraphQL item, or a Fabric admin has not enabled \"Allow " +
+                  "service principals to use Fabric APIs\"."
+                : "";
+            return new FabricGraphQlResult(false,
+                $"The GraphQL endpoint returned HTTP {(int)response.StatusCode}: {EntraAuth.Truncate(body, 300)}{hint}",
+                body);
+        }
+
+        // A GraphQL endpoint can return HTTP 200 with an "errors" array instead of failing at the
+        // transport level — that is still a real failure from the caller's point of view.
+        string? graphQlErrors = ReadGraphQlErrors(body);
+        if (graphQlErrors is not null)
+        {
+            return new FabricGraphQlResult(false, $"The GraphQL query returned error(s): {graphQlErrors}", body);
+        }
+
+        return new FabricGraphQlResult(true, "OK", body);
+    }
+
+    private static string? ReadGraphQlErrors(string json)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("errors", out JsonElement errors)
+                || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            IEnumerable<string> messages = errors.EnumerateArray()
+                .Select(e => e.TryGetProperty("message", out JsonElement m) ? m.GetString() ?? "" : "")
+                .Where(m => m.Length > 0);
+
+            return EntraAuth.Truncate(string.Join("; ", messages), 300);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }

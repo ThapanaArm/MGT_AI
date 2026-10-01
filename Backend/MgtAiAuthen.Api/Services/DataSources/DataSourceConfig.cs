@@ -24,11 +24,12 @@ public static class DataSourceConfig
         [DataSourceTypes.LocalFolder] = ["path"],
         // siteUrl is the SharePoint site, e.g. https://contoso.sharepoint.com/sites/Sales
         [DataSourceTypes.SharePoint] = ["siteUrl", "tenantId", "clientId"],
-        // Microsoft Fabric — either a Power BI semantic model (DAX) or a Warehouse/Lakehouse SQL
-        // endpoint (T-SQL), picked per source via "connectionMode". tenantId/clientId are common to
-        // both; the mode-specific fields (datasetId+daxQuery, or sqlEndpoint+database+sqlQuery) are
-        // validated below rather than listed here, since exactly one set is required depending on
-        // the mode. See PowerBiConnectionTester for the admin-side prerequisites this cannot check.
+        // Microsoft Fabric — a Power BI semantic model (DAX), a Warehouse/Lakehouse SQL endpoint
+        // (T-SQL), or an "API for GraphQL" item (GraphQL), picked per source via "connectionMode".
+        // tenantId/clientId are common to all three; the mode-specific fields (datasetId+daxQuery,
+        // sqlEndpoint+database+sqlQuery, or graphqlEndpoint+graphqlQuery) are validated below rather
+        // than listed here, since exactly one set is required depending on the mode. See
+        // PowerBiConnectionTester for the admin-side prerequisites this cannot check.
         [DataSourceTypes.DataLake] = ["tenantId", "clientId"],
     };
 
@@ -104,15 +105,19 @@ public static class DataSourceConfig
         {
             // Blank = PowerBi, so every source registered before this field existed is unaffected.
             string mode = config.GetValueOrDefault("connectionMode", "").Trim();
-            if (mode.Length > 0 && !new[] { "PowerBi", "Warehouse" }.Contains(mode, StringComparer.OrdinalIgnoreCase))
+            if (mode.Length > 0 && !new[] { "PowerBi", "Warehouse", "GraphQL" }.Contains(mode, StringComparer.OrdinalIgnoreCase))
             {
-                throw new AppException("connectionMode must be PowerBi or Warehouse");
+                throw new AppException("connectionMode must be PowerBi, Warehouse, or GraphQL");
             }
 
             bool isWarehouse = string.Equals(mode, "Warehouse", StringComparison.OrdinalIgnoreCase);
+            bool isGraphQl = string.Equals(mode, "GraphQL", StringComparison.OrdinalIgnoreCase);
+            string modeLabel = isWarehouse ? "Warehouse" : isGraphQl ? "GraphQL" : "Power BI";
             string[] modeRequired = isWarehouse
                 ? ["sqlEndpoint", "database", "sqlQuery"]
-                : ["datasetId", "daxQuery"];
+                : isGraphQl
+                    ? ["graphqlEndpoint", "graphqlQuery"]
+                    : ["datasetId", "daxQuery"];
 
             List<string> missingMode = modeRequired
                 .Where(key => string.IsNullOrWhiteSpace(config.GetValueOrDefault(key)))
@@ -121,7 +126,20 @@ public static class DataSourceConfig
             if (missingMode.Count > 0)
             {
                 throw new AppException(
-                    $"Missing required setting(s) for {sourceType} ({(isWarehouse ? "Warehouse" : "Power BI")} mode): {string.Join(", ", missingMode)}");
+                    $"Missing required setting(s) for {sourceType} ({modeLabel} mode): {string.Join(", ", missingMode)}");
+            }
+
+            string variablesRaw = config.GetValueOrDefault("graphqlVariables", "").Trim();
+            if (isGraphQl && variablesRaw.Length > 0)
+            {
+                try
+                {
+                    JsonSerializer.Deserialize<JsonElement>(variablesRaw);
+                }
+                catch (JsonException ex)
+                {
+                    throw new AppException($"graphqlVariables is not valid JSON: {ex.Message}");
+                }
             }
         }
     }

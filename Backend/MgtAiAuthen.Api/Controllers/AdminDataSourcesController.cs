@@ -18,7 +18,7 @@ namespace MgtAiAuthen.Api.Controllers;
 [ApiController]
 [Route("api/admin/data-sources")]
 [Authorize(Roles = UserRoles.Admin)]
-public class AdminDataSourcesController(IDataSourceService dataSources) : ControllerBase
+public class AdminDataSourcesController(IDataSourceService dataSources, IRagImportService ragImport) : ControllerBase
 {
     /// <summary>ชนิดแหล่งข้อมูลและขอบเขตสิทธิ์ที่ระบบรู้จัก — frontend ใช้สร้างตัวเลือก</summary>
     [HttpGet("metadata")]
@@ -60,6 +60,26 @@ public class AdminDataSourcesController(IDataSourceService dataSources) : Contro
     [ProducesResponseType(typeof(DataSourceTestResult), StatusCodes.Status200OK)]
     public async Task<ActionResult<DataSourceTestResult>> Test(int id, CancellationToken ct)
         => Ok(await dataSources.TestConnectionAsync(id, User.GetUsername(), ct));
+
+    /// <summary>
+    /// นำเข้า corpus สำหรับ Rag source — รับไฟล์ JSONL (1 JSON object ต่อบรรทัด), สร้าง embedding
+    /// ทีละ batch แล้วแทนที่ chunk เดิมทั้งหมดของ source นี้ด้วยชุดใหม่
+    /// </summary>
+    [HttpPost("{id:int}/rag/import")]
+    [RequestSizeLimit(64L * 1024 * 1024)]
+    [ProducesResponseType(typeof(RagImportResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<RagImportResult>> ImportRagCorpus(
+        int id, IFormFile file, CancellationToken ct)
+    {
+        if (file.Length == 0)
+        {
+            return BadRequest("No file was uploaded.");
+        }
+
+        await using Stream stream = file.OpenReadStream();
+        RagImportResult result = await ragImport.ImportAsync(id, stream, User.GetUsername(), ct);
+        return Ok(result);
+    }
 
     // ---------------------------------------------------------------- สิทธิ์
 

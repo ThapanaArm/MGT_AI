@@ -59,6 +59,7 @@ public class ChatService(
     ICostCalculator costCalculator,
     IAttachmentService attachments,
     IDataSourceService dataSources,
+    IEmbeddingService embeddings,
     IAuditService audit,
     IHttpContextAccessor httpContextAccessor,
     IOptions<ClaudeOptions> claudeOptions,
@@ -245,6 +246,27 @@ public class ChatService(
                 $"Rule \"{decision.RuleName}\" (severity {decision.Severity}, action {decision.Flag}) " +
                 $"flagged message {userMessage.MessageId}",
                 isSuccess: true, ct);
+        }
+
+        if (session.DataSourceId is { } activeSourceId)
+        {
+            // Fetched fresh for every message (not just once at session start) so the data behind
+            // an answer is never more than one turn stale — and for a Warehouse-mode source whose
+            // configured query is actually several batched SELECT statements, or a Rag source,
+            // only what's relevant to THIS question is run/retrieved, instead of paying the token
+            // cost of everything on every single message regardless of what was asked.
+            try
+            {
+                string? perMessageOverride = await ResolvePerMessageOverrideAsync(activeSourceId, content, model, chosen.Provider, ct);
+                await dataSources.FetchForSessionAsync(
+                    session.SessionId, activeSourceId, userId, user.Username, ct, perMessageOverride);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Data source fetch failed for session {SessionId} (source {SourceId})",
+                    session.SessionId, activeSourceId);
+            }
         }
 
         List<ChatTurn> turns = await BuildHistoryAsync(session.SessionId, session.ProjectId, session.DataSourceId, ct);
@@ -504,23 +526,10 @@ public class ChatService(
             db.ChatSessions.Add(created);
             await db.SaveChangesAsync(ct);
 
-            if (resolvedDataSourceId is { } sourceId)
-            {
-                // Pull data once up front so the very first question already has it as context.
-                // A failure here must not block starting the conversation — the fetch-status
-                // endpoint surfaces the failure, and the user can retry with "Refresh".
-                try
-                {
-                    await dataSources.FetchForSessionAsync(created.SessionId, sourceId, userId, username, ct);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex,
-                        "Initial data source fetch failed for session {SessionId} (source {SourceId})",
-                        created.SessionId, sourceId);
-                }
-            }
-
+            // No eager fetch here anymore — session creation and its first message happen inside
+            // the same SendAsync call, which now fetches fresh (query-selected) right before
+            // building history regardless of whether the session is brand new or not. See the
+            // call site below, and ResolvePreferredQueryAsync.
             return created;
         }
 
@@ -686,10 +695,172 @@ public class ChatService(
     }
 
     /// <summary>
-    /// Builds the leading turn pair carrying the session's cached Data Source fetch, or an empty
-    /// list when there is no Data Source, no fetch has succeeded yet, or the fetch found nothing
-    /// readable. The content itself was already pulled (at session creation, or by "Refresh") —
-    /// this only resends the cached result, the same way project files are resent every call.
+    /// Computes whatever gets passed down as the fetcher's scopeFilter override for THIS message —
+    /// either AI-based SQL-statement selection (Warehouse mode) or embedding-based chunk retrieval
+    /// (Rag type). Returns null (meaning "fetch the source's full configured content, unchanged")
+    /// whenever neither applies, there is no question text, or the underlying call fails — a
+    /// hiccup here must fall back to the source's normal behaviour, never to silently fetching
+    /// nothing.
+    /// </summary>
+    private async Task<string?> ResolvePerMessageOverrideAsync(
+        int sourceId, string userQuestion, string model, string provider, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userQuestion))
+        {
+            return null;
+        }
+
+        DataSource? source = await db.DataSources.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SourceId == sourceId, ct);
+
+        if (source is null)
+        {
+            return null;
+        }
+
+        if (string.Equals(source.SourceType, DataSourceTypes.Rag, StringComparison.OrdinalIgnoreCase))
+        {
+            return await ResolveRagRetrievalAsync(sourceId, userQuestion, ct);
+        }
+
+        if (!string.Equals(source.SourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
+        bool isWarehouse = string.Equals(
+            config.GetValueOrDefault("connectionMode", ""), "Warehouse", StringComparison.OrdinalIgnoreCase);
+
+        return isWarehouse
+            ? await ResolveWarehouseQuerySelectionAsync(sourceId, config, userQuestion, model, provider, ct)
+            : null;
+    }
+
+    /// <summary>
+    /// For a Warehouse-mode Data Source whose configured "sqlQuery" is actually several
+    /// semicolon-separated SELECT statements batched together (see FabricWarehouseQuery), asks the
+    /// AI which one(s) are relevant to THIS question — so a message about product counts does not
+    /// also pay to fetch and include an unrelated purchase-order listing, say.
+    /// </summary>
+    private async Task<string?> ResolveWarehouseQuerySelectionAsync(
+        int sourceId, Dictionary<string, string> config, string userQuestion,
+        string model, string provider, CancellationToken ct)
+    {
+        string[] statements = SplitSqlStatements(config.GetValueOrDefault("sqlQuery", ""));
+        if (statements.Length < 2)
+        {
+            return null;
+        }
+
+        string listing = string.Join("\n", statements.Select((s, i) => $"{i + 1}. {s}"));
+
+        try
+        {
+            AiReply reply = await ai.CompleteAsync(
+                "You choose which of several SQL queries should run to answer a question. Reply " +
+                "with ONLY the number(s) of the matching quer(y/ies), comma-separated if more than " +
+                "one applies — or 0 if none clearly match, meaning run all of them. No other text, " +
+                "no explanation.",
+                [new ChatTurn(MessageRoles.User, $"Queries:\n{listing}\n\nQuestion: {userQuestion}")],
+                model, provider, ct);
+
+            List<int> picked = reply.Text
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(t => int.TryParse(t, out int n) ? n : -1)
+                .Where(n => n >= 1 && n <= statements.Length)
+                .Distinct()
+                .ToList();
+
+            // Empty, unparseable, or an explicit 0 all mean the same thing here: run everything.
+            return picked.Count == 0 ? null : string.Join(";\n", picked.Select(n => statements[n - 1])) + ";";
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Query-selection call failed for data source {SourceId} — running every configured query instead",
+                sourceId);
+            return null;
+        }
+    }
+
+    /// <summary>Good enough for admin-authored SELECT statements — does not try to be a real SQL parser (no handling for a semicolon embedded inside a string literal).</summary>
+    private static string[] SplitSqlStatements(string sql)
+        => sql.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToArray();
+
+    /// <summary>
+    /// Embeds the question, ranks every chunk belonging to this Rag source by cosine similarity in
+    /// memory (a few hundred chunks at most — no vector index needed), and returns the top few as
+    /// labelled, citable text. Returns null if nothing is imported yet or embedding fails; the
+    /// caller's own fallback then leaves RagFetcher to report "nothing to search against" rather
+    /// than this throwing and breaking the whole message.
+    /// </summary>
+    private async Task<string?> ResolveRagRetrievalAsync(int sourceId, string userQuestion, CancellationToken ct)
+    {
+        const int topK = 6;
+
+        List<RagChunk> chunks = await db.RagChunks.AsNoTracking()
+            .Where(c => c.SourceId == sourceId)
+            .ToListAsync(ct);
+
+        if (chunks.Count == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            IReadOnlyList<float[]> embedded = await embeddings.EmbedAsync([userQuestion], ct);
+            if (embedded.Count == 0)
+            {
+                return null;
+            }
+
+            float[] queryVector = embedded[0];
+
+            var ranked = chunks
+                .Select(c => (Chunk: c, Score: RagEmbedding.CosineSimilarity(queryVector, RagEmbedding.Unpack(c.Embedding))))
+                .OrderByDescending(x => x.Score)
+                .Take(topK);
+
+            var sb = new StringBuilder();
+
+            foreach ((RagChunk chunk, float score) in ranked)
+            {
+                sb.Append('[').Append(chunk.SourceFile ?? "source");
+
+                if (chunk.PageStart is { } start)
+                {
+                    sb.Append(", page ").Append(start);
+                    if (chunk.PageEnd is { } end && end != start) sb.Append('-').Append(end);
+                }
+
+                if (!string.IsNullOrWhiteSpace(chunk.Chapter)) sb.Append(", ").Append(chunk.Chapter);
+                if (!string.IsNullOrWhiteSpace(chunk.Section)) sb.Append(", ").Append(chunk.Section);
+
+                sb.Append($", similarity {score:0.00}]\n");
+                sb.Append(chunk.ChunkText.Trim());
+                sb.Append("\n\n---\n\n");
+            }
+
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "RAG retrieval failed for data source {SourceId} — falling back to \"nothing to search against\"",
+                sourceId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Builds the leading turn pair carrying the session's Data Source fetch, or an empty list
+    /// when there is no Data Source, no fetch has succeeded yet, or the fetch found nothing
+    /// readable. The content itself was already pulled a moment ago in SendAsync (fresh on every
+    /// message) — this only resends the cached result, the same way project files are resent every call.
     /// </summary>
     private async Task<List<ChatTurn>> BuildDataSourceContextTurnsAsync(
         Guid sessionId, int? dataSourceId, CancellationToken ct)
@@ -718,12 +889,25 @@ public class ChatService(
                 Encoding.UTF8.GetBytes(fetch.ContentText), fetch.ContentText),
         };
 
+        // fetch.Truncated means the real dataset is bigger than what fits in one fetch (see
+        // DataSourceFetchLimits.MaxChars) — the model previously had no way to know this and would
+        // confidently report a count/total computed off the partial data as if it were complete.
+        string truncationWarning = fetch.Truncated
+            ? " This is only PART of the data — it was cut off because the full result is too large " +
+              "to include in one message. Do not state a total count, sum, or \"complete list\" from " +
+              "what is shown here; say explicitly that the data is truncated and the true total may " +
+              "be higher, and suggest asking for an aggregate (e.g. COUNT/SUM) query instead if an " +
+              "exact total is needed."
+            : "";
+
         return
         [
             new ChatTurn(MessageRoles.User,
-                $"Data pulled from \"{source?.SourceName}\" is attached below (fetched {fetch.FetchedAt:yyyy-MM-dd HH:mm}).",
+                $"Data pulled from \"{source?.SourceName}\" is attached below (fetched {fetch.FetchedAt:yyyy-MM-dd HH:mm})." +
+                truncationWarning,
                 turnFiles),
-            new ChatTurn(MessageRoles.Assistant, "Understood — I have the data source's content as context."),
+            new ChatTurn(MessageRoles.Assistant, "Understood — I have the data source's content as context." +
+                (fetch.Truncated ? " I'll flag that it's truncated in my answer." : "")),
         ];
     }
 

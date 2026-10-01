@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api, apiForm } from '../api/client';
 import { formatDateTime } from '../lib/constants';
 
 const EMPTY_FORM = {
@@ -36,7 +36,7 @@ const CONFIG_FIELDS = {
     { key: 'clientId', label: 'Entra ID app (client) ID' },
     {
       key: 'connectionMode', label: 'Connection mode', type: 'select',
-      options: ['PowerBi', 'Warehouse'], default: 'PowerBi',
+      options: ['PowerBi', 'Warehouse', 'GraphQL'], default: 'PowerBi',
     },
     { key: 'datasetId', label: 'Dataset (semantic model) ID (if Connection mode = PowerBi)', placeholder: 'GUID — from the model’s Settings page in Fabric/Power BI' },
     {
@@ -46,8 +46,17 @@ const CONFIG_FIELDS = {
     { key: 'sqlEndpoint', label: 'SQL endpoint (if Connection mode = Warehouse)', placeholder: 'xxxx.datawarehouse.fabric.microsoft.com' },
     { key: 'database', label: 'Database / warehouse name (if Connection mode = Warehouse)', placeholder: 'Sales_DW' },
     {
-      key: 'sqlQuery', label: 'SQL query (if Connection mode = Warehouse)', type: 'textarea',
-      placeholder: 'SELECT TOP 1000 * FROM dbo.Sales',
+      key: 'sqlQuery', label: 'SQL query (if Connection mode = Warehouse) — enter more than one SELECT, separated by semicolons, to fetch several tables at once', type: 'textarea',
+      placeholder: 'SELECT TOP 1000 * FROM dbo.Sales;\nSELECT TOP 1000 * FROM dbo.Purchases;',
+    },
+    { key: 'graphqlEndpoint', label: 'GraphQL endpoint URL (if Connection mode = GraphQL)', placeholder: 'https://xxxx.graphql.fabric.microsoft.com/v1/workspaces/.../graphqlapis/.../graphql' },
+    {
+      key: 'graphqlQuery', label: 'GraphQL query (if Connection mode = GraphQL)', type: 'textarea',
+      placeholder: 'query { purchaseOrders(first: 100) { items { id status } } }',
+    },
+    {
+      key: 'graphqlVariables', label: 'GraphQL variables — JSON (if Connection mode = GraphQL, optional)', type: 'textarea',
+      placeholder: '{ "status": "Open" }',
     },
     { key: 'timeoutMinutes', label: 'Timeout (minutes)', placeholder: '2 (default)' },
   ],
@@ -59,6 +68,7 @@ const CONFIG_FIELDS = {
     { key: 'tenantId', label: 'Entra ID tenant ID' },
     { key: 'clientId', label: 'Entra ID app (client) ID' },
   ],
+  Rag: [],
 };
 
 const SECRET_LABEL = {
@@ -66,6 +76,7 @@ const SECRET_LABEL = {
   DataLake: 'Client secret',
   LocalFolder: null,
   SharePoint: 'Client secret',
+  Rag: null,
 };
 
 const TYPE_LABELS = {
@@ -73,6 +84,7 @@ const TYPE_LABELS = {
   DataLake: 'Data Lake / Lakehouse (Microsoft Fabric)',
   LocalFolder: 'Local / network folder',
   SharePoint: 'SharePoint',
+  Rag: 'Knowledge base (RAG)',
 };
 
 export default function DataSourcesPage() {
@@ -81,6 +93,8 @@ export default function DataSourcesPage() {
   const [editingId, setEditingId] = useState(null);
   const [testResults, setTestResults] = useState({});
   const [testing, setTesting] = useState(null);
+  const [importResults, setImportResults] = useState({});
+  const [importing, setImporting] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
@@ -185,6 +199,24 @@ export default function DataSourcesPage() {
     }
   }
 
+  async function handleImportCorpus(source, file) {
+    if (!file) return;
+    setImporting(source.sourceId);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const result = await apiForm(`/api/admin/data-sources/${source.sourceId}/rag/import`, formData);
+      setImportResults((prev) => ({ ...prev, [source.sourceId]: { success: true, ...result } }));
+      setMessage(result.message);
+    } catch (err) {
+      setImportResults((prev) => ({ ...prev, [source.sourceId]: { success: false, message: err.message } }));
+      setError(err.message);
+    } finally {
+      setImporting(null);
+    }
+  }
+
   const fields = CONFIG_FIELDS[form.sourceType] ?? [];
   const secretLabel = SECRET_LABEL[form.sourceType];
 
@@ -249,20 +281,37 @@ export default function DataSourcesPage() {
 
           {form.sourceType === 'DataLake' && (
             <div className="alert alert-warn field-wide">
-              Connects to Microsoft Fabric as either a Power BI semantic model queried with DAX
-              ("PowerBi" mode) or a Fabric Warehouse/Lakehouse SQL analytics endpoint queried with
-              T-SQL ("Warehouse" mode) — pick the mode above; only that mode's fields below are
-              used. Either way, the Entra ID app registration needs the right permission (the
-              Power BI Service API, e.g. Dataset.Read.All, for PowerBi mode; SQL access granted to
-              the service principal for Warehouse mode) and a Fabric admin must enable "Allow
-              service principals to use Fabric APIs" in the Fabric admin portal — ask your
+              Connects to Microsoft Fabric as a Power BI semantic model queried with DAX ("PowerBi"
+              mode), a Fabric Warehouse/Lakehouse SQL analytics endpoint queried with T-SQL
+              ("Warehouse" mode), or a Fabric "API for GraphQL" item queried with GraphQL
+              ("GraphQL" mode) — pick the mode above; only that mode's fields below are used.
+              Warehouse mode's SQL query can be more than one SELECT statement separated by
+              semicolons — each one comes back as its own table. Either way, the Entra ID app
+              registration needs the right permission (the Power BI
+              Service API, e.g. Dataset.Read.All, for PowerBi mode; SQL access granted to the
+              service principal for Warehouse mode; Execute permission — "Run Queries and
+              Mutations" — on the GraphQL item for GraphQL mode) and a Fabric admin must enable
+              "Allow service principals to use Fabric APIs" in the Fabric admin portal — ask your
               IT/Fabric administrator. Until then, "Test connection" will report the exact error
-              Fabric or the SQL endpoint returns.
+              Fabric, the SQL endpoint, or the GraphQL endpoint returns.
+            </div>
+          )}
+
+          {form.sourceType === 'Rag' && (
+            <div className="alert alert-warn field-wide">
+              Holds a pre-chunked knowledge base (e.g. policy or reference documents already split
+              into passages) searched by meaning rather than queried live. Needs no connection
+              fields or secret here — register the source first, then use "Import corpus" in the
+              table below to upload a JSONL file (one JSON object per line, each with at least a
+              "text" field; "source_file", "page", "chapter" and "section" are used for citations
+              if present). Re-importing replaces everything previously imported for this source.
+              Requires an OpenAI API key configured on the server (used only to generate
+              embeddings, independent of which AI provider answers the chat).
             </div>
           )}
 
           {fields.map((f) => (
-            <div className="field" key={f.key}>
+            <div className={f.type === 'textarea' ? 'field field-wide' : 'field'} key={f.key}>
               <label htmlFor={`cfg-${f.key}`}>{f.label}</label>
               {f.type === 'select' ? (
                 <select
@@ -276,10 +325,12 @@ export default function DataSourcesPage() {
               ) : f.type === 'textarea' ? (
                 <textarea
                   id={`cfg-${f.key}`}
-                  rows={4}
+                  className="field-code"
+                  rows={10}
                   value={form.config[f.key] ?? ''}
                   onChange={(e) => patchConfig(f.key, e.target.value)}
                   placeholder={f.placeholder}
+                  spellCheck={false}
                 />
               ) : (
                 <input
@@ -390,6 +441,26 @@ export default function DataSourcesPage() {
                       >
                         {testing === s.sourceId ? 'Testing…' : 'Test'}
                       </button>
+                      {s.sourceType === 'Rag' && (
+                        <label
+                          className="btn-link"
+                          style={{ cursor: importing === s.sourceId ? 'default' : 'pointer' }}
+                          title={importResults[s.sourceId]?.message}
+                        >
+                          {importing === s.sourceId ? 'Importing…' : 'Import corpus'}
+                          <input
+                            type="file"
+                            accept=".jsonl,.txt"
+                            style={{ display: 'none' }}
+                            disabled={importing === s.sourceId}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = '';
+                              handleImportCorpus(s, file);
+                            }}
+                          />
+                        </label>
+                      )}
                       <button type="button" className="btn-link" onClick={() => startEdit(s)}>
                         Edit
                       </button>

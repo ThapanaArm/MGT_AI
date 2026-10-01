@@ -37,11 +37,19 @@ public interface IDataSourceService
 
     /// <summary>
     /// Pulls data for one conversation's Data Source and caches the result on
-    /// <see cref="ChatSessionDataFetch"/> (first call inserts, later calls — "Refresh" — overwrite it).
+    /// <see cref="ChatSessionDataFetch"/> (first call inserts, later calls overwrite it — called
+    /// fresh on every message now, not just once at session start, so the data a question gets
+    /// answered from is never more than one turn stale).
     /// Throws <see cref="AppException"/> if the user has no active grant for the session's source.
     /// </summary>
+    /// <param name="preferredQueryOverride">
+    /// Which of the source's own configured quer(y/ies) is relevant to the current question — see
+    /// ChatService.ResolvePreferredQueryAsync. Ignored when the grant itself carries a scope
+    /// filter (that is a security boundary and always wins); null runs every configured query.
+    /// </param>
     Task<DataSourceFetchStatusDto> FetchForSessionAsync(
-        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default);
+        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default,
+        string? preferredQueryOverride = null);
 
     Task<DataSourceFetchStatusDto> GetFetchStatusAsync(Guid sessionId, CancellationToken ct = default);
 }
@@ -219,6 +227,12 @@ public class DataSourceService(
         Dictionary<string, string> config = DataSourceConfig.Parse(entity.ConfigJson);
         string? secret = Unprotect(entity.EncryptedSecret);
 
+        // RagConnectionTester has nothing of its own in config (a Rag source's real "config" is
+        // its imported RagChunks rows, not a URL/tenant/etc.) but still needs to know which
+        // source it's being asked about — smuggled in under a key no real config ever uses rather
+        // than widening IDataSourceConnectionTester's signature for every other type's benefit.
+        config["__sourceId"] = sourceId.ToString();
+
         DataSourceTestResult result = await tester.TestAsync(config, secret, ct);
 
         await audit.LogAsync(AuditCategories.Admin, AuditActions.DataSourceTested, null, testedBy,
@@ -360,7 +374,8 @@ public class DataSourceService(
     }
 
     public async Task<DataSourceFetchStatusDto> FetchForSessionAsync(
-        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default)
+        Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default,
+        string? preferredQueryOverride = null)
     {
         DataSourceGrant grant = await db.DataSourceGrants.AsNoTracking()
             .FirstOrDefaultAsync(g => g.SourceId == sourceId && g.UserId == userId && g.IsActive, ct)
@@ -383,7 +398,15 @@ public class DataSourceService(
         Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
         string? secret = Unprotect(source.EncryptedSecret);
 
-        DataSourceFetchResult result = await fetcher.FetchAsync(config, secret, grant.ScopeFilter, ct);
+        // A grant's own scope filter is a security boundary (restricts what this specific user may
+        // see) and always wins when set. preferredQueryOverride is purely an efficiency choice (which
+        // of the admin's own configured queries is relevant to the current question) and only ever
+        // applies for a "Full" grant that has no such restriction to begin with.
+        string? effectiveOverride = !string.IsNullOrWhiteSpace(grant.ScopeFilter)
+            ? grant.ScopeFilter
+            : preferredQueryOverride;
+
+        DataSourceFetchResult result = await fetcher.FetchAsync(config, secret, effectiveOverride, ct);
 
         ChatSessionDataFetch? existing = await db.ChatSessionDataFetches
             .FirstOrDefaultAsync(f => f.SessionId == sessionId, ct);
