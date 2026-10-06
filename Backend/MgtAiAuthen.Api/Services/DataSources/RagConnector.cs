@@ -22,7 +22,13 @@ public interface IEmbeddingService
     bool IsConfigured { get; }
     string Model { get; }
 
+    /// <summary>List price in USD per 1M input tokens — used to show what an import cost.</summary>
+    decimal UsdPerMTok { get; }
+
     Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken ct = default);
+
+    /// <summary>Same as <see cref="EmbedAsync"/>, plus the number of tokens the provider billed for.</summary>
+    Task<(IReadOnlyList<float[]> Vectors, int Tokens)> EmbedWithUsageAsync(IReadOnlyList<string> texts, CancellationToken ct = default);
 }
 
 public class OpenAiEmbeddingService : IEmbeddingService
@@ -51,7 +57,13 @@ public class OpenAiEmbeddingService : IEmbeddingService
 
     public string Model => ModelName;
 
+    public decimal UsdPerMTok => 0.02m;
+
     public async Task<IReadOnlyList<float[]>> EmbedAsync(IReadOnlyList<string> texts, CancellationToken ct = default)
+        => (await EmbedWithUsageAsync(texts, ct)).Vectors;
+
+    public async Task<(IReadOnlyList<float[]> Vectors, int Tokens)> EmbedWithUsageAsync(
+        IReadOnlyList<string> texts, CancellationToken ct = default)
     {
         if (!IsConfigured)
         {
@@ -63,7 +75,7 @@ public class OpenAiEmbeddingService : IEmbeddingService
 
         if (texts.Count == 0)
         {
-            return [];
+            return ([], 0);
         }
 
         object payload = new { model = ModelName, input = texts };
@@ -94,13 +106,22 @@ public class OpenAiEmbeddingService : IEmbeddingService
 
         // "data" is documented as returned in the same order as the "input" array was sent, so
         // index position (not an "index" field lookup) is enough to zip results back to inputs.
-        return doc.RootElement.GetProperty("data")
+        List<float[]> vectors = doc.RootElement.GetProperty("data")
             .EnumerateArray()
             .Select(item => item.GetProperty("embedding")
                 .EnumerateArray()
                 .Select(v => (float)v.GetDouble())
                 .ToArray())
             .ToList();
+
+        int tokens = doc.RootElement.TryGetProperty("usage", out JsonElement usage)
+                     && usage.ValueKind == JsonValueKind.Object
+                     && usage.TryGetProperty("total_tokens", out JsonElement total)
+                     && total.TryGetInt32(out int counted)
+            ? counted
+            : 0;
+
+        return (vectors, tokens);
     }
 }
 

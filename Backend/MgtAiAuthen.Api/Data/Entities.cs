@@ -73,6 +73,10 @@ public static class AuditActions
     public const string DataSourceFetched = "DATASOURCE_FETCHED";
     public const string DataSourceFetchFailed = "DATASOURCE_FETCH_FAILED";
 
+    public const string RagCategoryChanged = "RAG_CATEGORY_CHANGED";
+    public const string RagCreated = "RAG_CREATED";
+    public const string RagExported = "RAG_EXPORTED";
+
     public const string ProjectCreated = "PROJECT_CREATED";
     public const string ProjectUpdated = "PROJECT_UPDATED";
     public const string ProjectDeleted = "PROJECT_DELETED";
@@ -133,6 +137,15 @@ public static class ChatModes
 }
 
 /// <summary>dbo.Users</summary>
+public static class AuthSources
+{
+    /// <summary>Password hash stored in dbo.Users itself.</summary>
+    public const string Local = "Local";
+
+    /// <summary>Password checked against the company user table (MS_User) on every sign-in.</summary>
+    public const string External = "External";
+}
+
 public class AppUser
 {
     public int UserId { get; set; }
@@ -149,6 +162,9 @@ public class AppUser
     public DateTime? LastLoginAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>Where the password is checked - see <see cref="AuthSources"/>.</summary>
+    public string AuthSource { get; set; } = AuthSources.Local;
 
     public ICollection<ChatSession> Sessions { get; set; } = new List<ChatSession>();
 }
@@ -533,6 +549,68 @@ public class DataSource
     public string? CreatedBy { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedBy { get; set; }
+
+    /// <summary>Only meaningful for <see cref="DataSourceTypes.Rag"/> sources — groups knowledge bases for the admin.</summary>
+    public int? RagCategoryId { get; set; }
+    public int? RagSubCategoryId { get; set; }
+}
+
+/// <summary>dbo.RagCategories — top-level grouping for RAG knowledge bases.</summary>
+public class RagCategory
+{
+    public int CategoryId { get; set; }
+    public string CategoryName { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public string? CreatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+
+    public List<RagSubCategory> SubCategories { get; set; } = [];
+}
+
+/// <summary>dbo.RagRuns - one "Create RAG" run with its token usage and frozen cost; no FK so history outlives a deleted RAG.</summary>
+public class RagRun
+{
+    public Guid RunId { get; set; }
+    public int? SourceId { get; set; }
+    public string SourceName { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string State { get; set; } = "Running";
+    public int FilesTotal { get; set; }
+    public int PagesTotal { get; set; }
+    public int ChunksCreated { get; set; }
+    public long InputTokens { get; set; }
+    public long OutputTokens { get; set; }
+    public long CacheTokens { get; set; }
+    public long EmbeddingTokens { get; set; }
+    public decimal OcrCostUsd { get; set; }
+    public decimal EmbeddingCostUsd { get; set; }
+    public decimal TotalCostUsd { get; set; }
+    public decimal TotalCostThb { get; set; }
+    public decimal UsdToThbRate { get; set; }
+    public string? Error { get; set; }
+    public string? StartedBy { get; set; }
+    public DateTime StartedAt { get; set; } = DateTime.Now;
+    public DateTime? FinishedAt { get; set; }
+}
+
+/// <summary>dbo.RagSubCategories — a second level under a <see cref="RagCategory"/>.</summary>
+public class RagSubCategory
+{
+    public int SubCategoryId { get; set; }
+    public int CategoryId { get; set; }
+    public string SubCategoryName { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public string? CreatedBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+
+    public RagCategory? Category { get; set; }
 }
 
 /// <summary>

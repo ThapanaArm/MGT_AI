@@ -23,6 +23,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
     public DbSet<ChatSessionDataFetch> ChatSessionDataFetches => Set<ChatSessionDataFetch>();
     public DbSet<RagChunk> RagChunks => Set<RagChunk>();
+    public DbSet<RagCategory> RagCategories => Set<RagCategory>();
+    public DbSet<RagSubCategory> RagSubCategories => Set<RagSubCategory>();
+    public DbSet<RagRun> RagRuns => Set<RagRun>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -39,6 +42,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.UserRole).HasColumnName("UserRole").HasMaxLength(20).IsRequired();
             e.Property(x => x.IsActive).HasColumnName("IsActive");
             e.Property(x => x.MustChangePassword).HasColumnName("MustChangePassword");
+            e.Property(x => x.AuthSource).HasColumnName("AuthSource").HasMaxLength(10).IsRequired();
             e.Property(x => x.FailedLoginCount).HasColumnName("FailedLoginCount");
             e.Property(x => x.LockoutUntil).HasColumnName("LockoutUntil");
             e.Property(x => x.LastLoginAt).HasColumnName("LastLoginAt");
@@ -270,7 +274,50 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(100);
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.Property(x => x.UpdatedBy).HasColumnName("UpdatedBy").HasMaxLength(100);
+            e.Property(x => x.RagCategoryId).HasColumnName("RagCategoryId");
+            e.Property(x => x.RagSubCategoryId).HasColumnName("RagSubCategoryId");
             e.HasIndex(x => x.SourceName).IsUnique();
+        });
+
+        b.Entity<RagCategory>(e =>
+        {
+            e.ToTable("RagCategories");
+            e.HasKey(x => x.CategoryId);
+            e.Property(x => x.CategoryName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(500);
+            e.Property(x => x.CreatedBy).HasMaxLength(100);
+            e.Property(x => x.UpdatedBy).HasMaxLength(100);
+            e.HasIndex(x => x.CategoryName).IsUnique();
+        });
+
+        b.Entity<RagRun>(e =>
+        {
+            e.ToTable("RagRuns");
+            e.HasKey(x => x.RunId);
+            e.Property(x => x.SourceName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Model).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Provider).HasMaxLength(30).IsRequired();
+            e.Property(x => x.State).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Error).HasMaxLength(1000);
+            e.Property(x => x.StartedBy).HasMaxLength(100);
+            e.Property(x => x.OcrCostUsd).HasPrecision(18, 8);
+            e.Property(x => x.EmbeddingCostUsd).HasPrecision(18, 8);
+            e.Property(x => x.TotalCostUsd).HasPrecision(18, 8);
+            e.Property(x => x.TotalCostThb).HasPrecision(18, 6);
+            e.Property(x => x.UsdToThbRate).HasPrecision(18, 6);
+        });
+
+        b.Entity<RagSubCategory>(e =>
+        {
+            e.ToTable("RagSubCategories");
+            e.HasKey(x => x.SubCategoryId);
+            e.Property(x => x.SubCategoryName).HasMaxLength(150).IsRequired();
+            e.Property(x => x.Description).HasMaxLength(500);
+            e.Property(x => x.CreatedBy).HasMaxLength(100);
+            e.Property(x => x.UpdatedBy).HasMaxLength(100);
+            e.HasOne(x => x.Category).WithMany(c => c.SubCategories)
+                .HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.CategoryId, x.SubCategoryName }).IsUnique();
         });
 
         b.Entity<RagChunk>(e =>

@@ -506,5 +506,6 @@ public class DataSourceService(
         DataSourceConfig.Parse(s.ConfigJson),
         HasSecret: !string.IsNullOrEmpty(s.EncryptedSecret),
         s.IsActive, activeGrantCount,
-        s.CreatedAt, s.CreatedBy, s.UpdatedAt, s.UpdatedBy);
+        s.CreatedAt, s.CreatedBy, s.UpdatedAt, s.UpdatedBy,
+        s.RagCategoryId, s.RagSubCategoryId);
 }

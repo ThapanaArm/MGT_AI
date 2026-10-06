@@ -126,6 +126,12 @@ public class AdminUsersController(
         AppUser user = await db.Users.FirstOrDefaultAsync(u => u.UserId == id, ct)
             ?? throw AppException.NotFound("User not found");
 
+        if (user.AuthSource == AuthSources.External)
+        {
+            throw new AppException(
+                $"{user.Username} signs in with the company user table - their password can only be changed there.");
+        }
+
         user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
         user.MustChangePassword = request.MustChangePassword;
         user.FailedLoginCount = 0;

@@ -56,7 +56,7 @@ export default function LoginPage() {
         {error && <div className="alert alert-danger">{error}</div>}
 
         <div className="field">
-          <label htmlFor="username">Username</label>
+          <label htmlFor="username">Username or email</label>
           <input
             id="username"
             value={username}

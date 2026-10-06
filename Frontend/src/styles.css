@@ -1010,87 +1010,49 @@ tbody tr:last-child td {
   outline: none;
 }
 
-.chat-topbar-help {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-  cursor: help;
-}
+/* ---------------------------------------------- Auditing / Administrator sections (title + tab bar) */
 
-.chat-topbar-help:hover {
-  border-color: var(--brand);
-  color: var(--brand);
-}
-
-.chat-topbar-admin {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.chat-topbar-gear {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.chat-topbar-gear:hover {
-  border-color: var(--brand);
-}
-
-.chat-topbar-admin-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
+.section-shell {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  min-width: 210px;
-  padding: 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+}
+
+.section-header {
+  padding: 18px 28px 0;
   background: var(--surface);
-  box-shadow: var(--shadow);
+  border-bottom: 1px solid var(--border);
 }
 
-.chat-topbar-admin-menu button {
-  text-align: left;
-  padding: 8px 10px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
+.section-header h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
 }
 
-.chat-topbar-admin-menu button:hover {
-  background: var(--surface-2);
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
 }
 
-.chat-topbar-admin-menu-label {
-  padding: 8px 10px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+.tab-bar-tab {
+  padding: 9px 16px;
+  border-bottom: 3px solid transparent;
   color: var(--text-muted);
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
-.chat-topbar-admin-menu-label:not(:first-child) {
-  margin-top: 4px;
-  border-top: 1px solid var(--border);
+.tab-bar-tab:hover {
+  color: var(--text);
+}
+
+.tab-bar-tab.active {
+  border-bottom-color: var(--brand);
+  color: var(--brand);
+  font-weight: 600;
 }
 
 /* ---------------------------------------------- ลากไฟล์มาวาง */

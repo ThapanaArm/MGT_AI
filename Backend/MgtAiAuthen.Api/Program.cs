@@ -24,6 +24,8 @@ builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection(Gemin
 builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection(OpenAiOptions.SectionName));
 builder.Services.Configure<QwenOptions>(builder.Configuration.GetSection(QwenOptions.SectionName));
 builder.Services.Configure<SecurityOptions>(builder.Configuration.GetSection(SecurityOptions.SectionName));
+builder.Services.Configure<ExternalAuthOptions>(builder.Configuration.GetSection(ExternalAuthOptions.SectionName));
+builder.Services.AddSingleton<IExternalUserDirectory, ExternalUserDirectory>();
 builder.Services.Configure<UploadOptions>(builder.Configuration.GetSection(UploadOptions.SectionName));
 
 string connectionString = builder.Configuration.GetConnectionString("Default")
@@ -196,6 +198,7 @@ builder.Services.AddScoped<IDataSourceConnectionTester, RagConnectionTester>();
 builder.Services.AddScoped<IDataSourceFetcher, RagFetcher>();
 builder.Services.AddSingleton<IEmbeddingService, OpenAiEmbeddingService>();
 builder.Services.AddScoped<IRagImportService, RagImportService>();
+builder.Services.AddSingleton<IRagCreateService, RagCreateService>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
 // Self-service Projects and Skills — any signed-in employee, not just Admin.

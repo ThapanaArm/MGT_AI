@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
+import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { api, apiForm, download } from '../api/client';
-import { useAuth } from '../auth/AuthContext';
 import MessageContent from '../components/MessageContent';
 import {
   FILE_KIND_LABELS,
@@ -48,20 +47,6 @@ const SUGGESTIONS = [
   },
 ];
 
-const AUDIT_LINKS = [
-  { to: '/logs/chat', label: 'Search chat logs' },
-  { to: '/logs/audit', label: 'System event log' },
-  { to: '/logs/cost', label: 'Token cost report' },
-];
-
-const ADMIN_LINKS = [
-  { to: '/admin/policy-rules', label: 'Question screening rules' },
-  { to: '/admin/model-pricing', label: 'Model pricing / exchange rate' },
-  { to: '/admin/users', label: 'User management' },
-  { to: '/admin/data-sources', label: 'Data source registry' },
-  { to: '/admin/data-source-access', label: 'Data source access' },
-];
-
 /** Guess the kind from the extension — only for the icon/label before upload; the server decides. */
 function guessKind(fileName) {
   const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase();
@@ -72,10 +57,7 @@ function guessKind(fileName) {
 }
 
 export default function ChatPage() {
-  const { isAdmin, canReadLogs } = useAuth();
-  const navigate = useNavigate();
   const { historySlot, closeMobileSidebar } = useOutletContext() ?? {};
-  const [showAdminMenu, setShowAdminMenu] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -567,65 +549,6 @@ export default function ChatPage() {
             </button>
           )}
 
-          {isAdmin || canReadLogs ? (
-            <div className="chat-topbar-admin">
-              <button
-                type="button"
-                className="chat-topbar-gear"
-                title={isAdmin ? 'Administrator settings' : 'Auditing'}
-                onClick={() => setShowAdminMenu((v) => !v)}
-                aria-expanded={showAdminMenu}
-              >
-                ⚙️
-              </button>
-              {showAdminMenu && (
-                <div className="chat-topbar-admin-menu">
-                  {canReadLogs && (
-                    <>
-                      <div className="chat-topbar-admin-menu-label">Auditing</div>
-                      {AUDIT_LINKS.map((link) => (
-                        <button
-                          key={link.to}
-                          type="button"
-                          onClick={() => {
-                            setShowAdminMenu(false);
-                            navigate(link.to);
-                          }}
-                        >
-                          {link.label}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {isAdmin && (
-                    <>
-                      <div className="chat-topbar-admin-menu-label">Administrator</div>
-                      {ADMIN_LINKS.map((link) => (
-                        <button
-                          key={link.to}
-                          type="button"
-                          onClick={() => {
-                            setShowAdminMenu(false);
-                            navigate(link.to);
-                          }}
-                        >
-                          {link.label}
-                        </button>
-                      ))}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="chat-topbar-help"
-              title="Attach files, pick a Project or Data source before your first message, choose a model, and export any answer as a report."
-            >
-              ?
-            </button>
-          )}
         </div>
 
         {dragging && (

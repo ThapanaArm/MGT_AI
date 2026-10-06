@@ -18,9 +18,11 @@ function initialsOf(fullName) {
 const COLLAPSE_STORAGE_KEY = 'sidebarCollapsed';
 
 export default function Layout() {
-  const { user, role, logout } = useAuth();
+  const { user, role, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  // A section link covers several routes (its tabs), so highlight it by path prefix rather than exact match.
+  const sectionLinkClass = (prefix) => `nav-link${location.pathname.startsWith(prefix) ? ' active' : ''}`;
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -119,6 +121,16 @@ export default function Layout() {
         <NavLink to="/skills" className="nav-link" title="Prompt library">
           <span className="nav-icon" aria-hidden="true">📚</span> <span className="nav-label">Prompt library</span>
         </NavLink>
+        {isAdmin && (
+          <>
+            <NavLink to="/logs/chat" className={sectionLinkClass('/logs/')} title="Auditing">
+              <span className="nav-icon" aria-hidden="true">🔍</span> <span className="nav-label">Auditing</span>
+            </NavLink>
+            <NavLink to="/admin/policy-rules" className={sectionLinkClass('/admin/')} title="Administrator">
+              <span className="nav-icon" aria-hidden="true">⚙️</span> <span className="nav-label">Administrator</span>
+            </NavLink>
+          </>
+        )}
 
         {/* ChatPage portals its search box + recent-conversations list in here, so it reads
             as one continuous panel with the nav above it, per the mockup. Empty on other pages. */}
@@ -148,9 +160,11 @@ export default function Layout() {
                 {user?.department ? ` · ${user.department}` : ''}
               </div>
               <div className="row-actions">
-                <NavLink to="/change-password" className="btn btn-secondary btn-sm">
-                  Change password
-                </NavLink>
+                {user?.authSource !== 'External' && (
+                  <NavLink to="/change-password" className="btn btn-secondary btn-sm">
+                    Change password
+                  </NavLink>
+                )}
                 <button type="button" className="btn btn-secondary btn-sm" onClick={handleLogout}>
                   Sign out
                 </button>

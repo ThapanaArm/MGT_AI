@@ -47,7 +47,8 @@ public record UserProfileDto(
     string? Department,
     string UserRole,
     bool MustChangePassword,
-    DateTime? LastLoginAt);
+    DateTime? LastLoginAt,
+    string AuthSource = "Local");
 
 public record LoginResponse(
     string AccessToken,
@@ -559,7 +560,9 @@ public record DataSourceDto(
     DateTime CreatedAt,
     string? CreatedBy,
     DateTime? UpdatedAt,
-    string? UpdatedBy);
+    string? UpdatedBy,
+    int? RagCategoryId = null,
+    int? RagSubCategoryId = null);
 
 public record DataSourceUpsertRequest
 {
