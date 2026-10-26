@@ -12,7 +12,7 @@ namespace MgtAiAuthen.Api.Services.DataSources;
 /// as context; it is null whenever nothing readable came back (a real failure, or a 0-file scope).
 /// </summary>
 public record DataSourceFetchResult(
-    bool Success, string Message, string? ContentText, int CharCount, bool Truncated);
+    bool Success, string Message, string? ContentText, int CharCount, bool Truncated, string? Query = null);
 
 /// <summary>
 /// One implementation per <see cref="DataSourceTypes"/> — mirrors <see cref="IDataSourceConnectionTester"/>
@@ -47,6 +47,38 @@ internal static class DataSourceFetchLimits
     // A defensive cap independent of MaxChars — an admin's SQL query should already have its own
     // TOP/LIMIT, but this keeps one huge unbounded query from holding the connection open forever.
     public const int MaxWarehouseRows = 20_000;
+
+    /// <summary>Config key the export path sets to ask for the uncapped, typed result.</summary>
+    public const string ExportMarker = "__export";
+
+    public const int ExportMaxRows = 100_000;
+
+    /// <summary>
+    /// Normal sources use the big caps above. A source in "Generated" query mode is meant to return a
+    /// small, targeted result (the AI wrote the query for this one question), so it gets tight caps by
+    /// default - 200 rows / 30,000 characters (roughly 10,000 tokens) - which is what keeps input tokens low.
+    /// Both can be tuned per source with generatedMaxRows / generatedMaxChars.
+    /// </summary>
+    internal static FetchCaps Resolve(Dictionary<string, string> config)
+    {
+        // "Download full data": the same query without the chat's small caps, kept as typed rows for a file.
+        if (config.ContainsKey(ExportMarker))
+        {
+            return new FetchCaps(ExportMaxRows, int.MaxValue, SkipText: true);
+        }
+
+        if (!string.Equals(config.GetValueOrDefault("queryMode", "").Trim(), "Generated", StringComparison.OrdinalIgnoreCase))
+        {
+            return new FetchCaps(MaxWarehouseRows, MaxChars);
+        }
+
+        int rows = int.TryParse(config.GetValueOrDefault("generatedMaxRows", "").Trim(), out int r)
+            ? Math.Clamp(r, 1, MaxWarehouseRows) : 200;
+        int chars = int.TryParse(config.GetValueOrDefault("generatedMaxChars", "").Trim(), out int c)
+            ? Math.Clamp(c, 2_000, MaxChars) : 30_000;
+
+        return new FetchCaps(rows, chars);
+    }
 }
 
 /// <summary>

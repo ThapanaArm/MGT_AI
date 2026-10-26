@@ -23,8 +23,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<ChatAttachment> ChatAttachments => Set<ChatAttachment>();
     public DbSet<ChatSessionDataFetch> ChatSessionDataFetches => Set<ChatSessionDataFetch>();
     public DbSet<RagChunk> RagChunks => Set<RagChunk>();
-    public DbSet<RagCategory> RagCategories => Set<RagCategory>();
-    public DbSet<RagSubCategory> RagSubCategories => Set<RagSubCategory>();
+    public DbSet<DataSourceCategory> DataSourceCategories => Set<DataSourceCategory>();
+    public DbSet<DataSourceSubCategory> DataSourceSubCategories => Set<DataSourceSubCategory>();
     public DbSet<RagRun> RagRuns => Set<RagRun>();
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -180,6 +180,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.SessionId).HasColumnName("SessionID");
             e.Property(x => x.UserId).HasColumnName("UserID");
             e.Property(x => x.MessageRole).HasColumnName("MessageRole").HasMaxLength(20).IsRequired();
+            e.Property(x => x.DataExportQuery).HasColumnName("DataExportQuery");
             e.Property(x => x.Content).HasColumnName("Content").IsRequired();
             e.Property(x => x.QuestionType).HasColumnName("QuestionType").HasMaxLength(20);
             e.Property(x => x.ChatMode).HasColumnName("ChatMode").HasMaxLength(20);
@@ -274,14 +275,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.CreatedBy).HasColumnName("CreatedBy").HasMaxLength(100);
             e.Property(x => x.UpdatedAt).HasColumnName("UpdatedAt");
             e.Property(x => x.UpdatedBy).HasColumnName("UpdatedBy").HasMaxLength(100);
-            e.Property(x => x.RagCategoryId).HasColumnName("RagCategoryId");
-            e.Property(x => x.RagSubCategoryId).HasColumnName("RagSubCategoryId");
+            e.Property(x => x.CategoryId).HasColumnName("CategoryId");
+            e.Property(x => x.SubCategoryId).HasColumnName("SubCategoryId");
             e.HasIndex(x => x.SourceName).IsUnique();
         });
 
-        b.Entity<RagCategory>(e =>
+        b.Entity<DataSourceCategory>(e =>
         {
-            e.ToTable("RagCategories");
+            e.ToTable("DataSourceCategories");
             e.HasKey(x => x.CategoryId);
             e.Property(x => x.CategoryName).HasMaxLength(150).IsRequired();
             e.Property(x => x.Description).HasMaxLength(500);
@@ -307,9 +308,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.UsdToThbRate).HasPrecision(18, 6);
         });
 
-        b.Entity<RagSubCategory>(e =>
+        b.Entity<DataSourceSubCategory>(e =>
         {
-            e.ToTable("RagSubCategories");
+            e.ToTable("DataSourceSubCategories");
             e.HasKey(x => x.SubCategoryId);
             e.Property(x => x.SubCategoryName).HasMaxLength(150).IsRequired();
             e.Property(x => x.Description).HasMaxLength(500);

@@ -47,11 +47,26 @@ public interface IDataSourceService
     /// ChatService.ResolvePreferredQueryAsync. Ignored when the grant itself carries a scope
     /// filter (that is a security boundary and always wins); null runs every configured query.
     /// </param>
+    /// <param name="question">
+    /// The user's message - only used by a source in "Generated" query mode, where the AI turns it
+    /// into the query to run (see GeneratedQueryPlanner).
+    /// </param>
     Task<DataSourceFetchStatusDto> FetchForSessionAsync(
         Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default,
-        string? preferredQueryOverride = null);
+        string? preferredQueryOverride = null, DataSourceQuestion? question = null);
 
     Task<DataSourceFetchStatusDto> GetFetchStatusAsync(Guid sessionId, CancellationToken ct = default);
+
+    /// <summary>Admin tool: runs one read-only query against a Supabase / Fabric Warehouse source and returns the first rows.</summary>
+    Task<DataSourcePreviewResult> PreviewQueryAsync(int sourceId, string query, int? maxRows, string? username, CancellationToken ct = default);
+
+    /// <summary>
+    /// "Download full data" for an answer whose chat result was cut off: re-runs the query stored with that
+    /// answer without the chat's row limit and returns it as an Excel / CSV file. Only the owner of the
+    /// conversation, and only while they still hold an active grant on the source.
+    /// </summary>
+    Task<Reporting.ReportFile> ExportMessageDataAsync(
+        long messageId, int userId, string? username, string format, CancellationToken ct = default);
 }
 
 public class DataSourceService(
@@ -59,6 +74,8 @@ public class DataSourceService(
     IEnumerable<IDataSourceConnectionTester> testers,
     IEnumerable<IDataSourceFetcher> fetchers,
     IDataProtectionProvider dataProtection,
+    IQueryPlanner planner,
+    IHttpClientFactory httpClientFactory,
     IAuditService audit,
     ILogger<DataSourceService> logger) : IDataSourceService
 {
@@ -109,6 +126,7 @@ public class DataSourceService(
         }
 
         DataSourceConfig.Validate(sourceType, request.Config);
+        await ValidateCategoryAsync(request.CategoryId, request.SubCategoryId, ct);
 
         var entity = new DataSource
         {
@@ -120,6 +138,8 @@ public class DataSourceService(
             IsActive = request.IsActive,
             CreatedAt = DateTime.Now,
             CreatedBy = createdBy,
+            CategoryId = request.CategoryId,
+            SubCategoryId = request.CategoryId is null ? null : request.SubCategoryId,
         };
 
         db.DataSources.Add(entity);
@@ -130,6 +150,26 @@ public class DataSourceService(
             isSuccess: true, ct);
 
         return ToDto(entity, activeGrantCount: 0);
+    }
+
+    private async Task ValidateCategoryAsync(int? categoryId, int? subCategoryId, CancellationToken ct)
+    {
+        if (categoryId is null)
+        {
+            if (subCategoryId is not null) throw new AppException("Choose a category before a sub category.");
+            return;
+        }
+
+        if (!await db.DataSourceCategories.AnyAsync(c => c.CategoryId == categoryId, ct))
+        {
+            throw new AppException("That category does not exist.");
+        }
+
+        if (subCategoryId is { } subId
+            && !await db.DataSourceSubCategories.AnyAsync(s => s.SubCategoryId == subId && s.CategoryId == categoryId, ct))
+        {
+            throw new AppException("That sub category does not belong to the chosen category.");
+        }
     }
 
     public async Task<DataSourceDto> UpdateAsync(
@@ -148,6 +188,7 @@ public class DataSourceService(
         }
 
         DataSourceConfig.Validate(sourceType, request.Config);
+        await ValidateCategoryAsync(request.CategoryId, request.SubCategoryId, ct);
 
         string before = $"{entity.SourceName} ({entity.SourceType}, {(entity.IsActive ? "active" : "inactive")})";
 
@@ -155,6 +196,8 @@ public class DataSourceService(
         entity.SourceType = sourceType;
         entity.Description = request.Description?.Trim();
         entity.ConfigJson = DataSourceConfig.Serialize(request.Config);
+        entity.CategoryId = request.CategoryId;
+        entity.SubCategoryId = request.CategoryId is null ? null : request.SubCategoryId;
 
         // null = leave the existing secret alone (the frontend never receives it back to resend);
         // "" = clear it; anything else = replace it. Mirrors the model-pricing Provider field fix.
@@ -375,7 +418,7 @@ public class DataSourceService(
 
     public async Task<DataSourceFetchStatusDto> FetchForSessionAsync(
         Guid sessionId, int sourceId, int userId, string? username, CancellationToken ct = default,
-        string? preferredQueryOverride = null)
+        string? preferredQueryOverride = null, DataSourceQuestion? question = null)
     {
         DataSourceGrant grant = await db.DataSourceGrants.AsNoTracking()
             .FirstOrDefaultAsync(g => g.SourceId == sourceId && g.UserId == userId && g.IsActive, ct)
@@ -406,7 +449,12 @@ public class DataSourceService(
             ? grant.ScopeFilter
             : preferredQueryOverride;
 
-        DataSourceFetchResult result = await fetcher.FetchAsync(config, secret, effectiveOverride, ct);
+        // "Generated" mode: the AI writes the query for THIS question. A grant's own scope filter still
+        // wins (it is a security boundary), so a restricted user runs the admin's query instead.
+        DataSourceFetchResult result = planner.IsGenerated(source.SourceType, config)
+                                       && string.IsNullOrWhiteSpace(grant.ScopeFilter)
+            ? await FetchGeneratedAsync(source, config, secret, fetcher, question, ct)
+            : await fetcher.FetchAsync(config, secret, effectiveOverride, ct);
 
         ChatSessionDataFetch? existing = await db.ChatSessionDataFetches
             .FirstOrDefaultAsync(f => f.SessionId == sessionId, ct);
@@ -449,8 +497,237 @@ public class DataSourceService(
             $"{sessionId}: {result.Message}", isSuccess: result.Success, ct);
 
         return new DataSourceFetchStatusDto(
-            sourceId, source.SourceName, result.Success, result.Message, fetchedAt, result.CharCount, result.Truncated);
+            sourceId, source.SourceName, result.Success, result.Message, fetchedAt, result.CharCount, result.Truncated,
+            result.Query);
     }
+
+    private async Task<DataSourceFetchResult> FetchGeneratedAsync(
+        DataSource source, Dictionary<string, string> config, string? secret, IDataSourceFetcher fetcher,
+        DataSourceQuestion? question, CancellationToken ct)
+    {
+        if (question is null || string.IsNullOrWhiteSpace(question.Text))
+        {
+            // The refresh button has no question to write a query for.
+            return new DataSourceFetchResult(true,
+                "A query is written for each question - nothing to refresh until you ask one.", "", 0, false);
+        }
+
+        QueryPlan plan = await planner.PlanAsync(source, config, secret, question, ct);
+
+        if (plan.NoDataNeeded)
+        {
+            return new DataSourceFetchResult(true, plan.Message, "", 0, false);
+        }
+
+        if (!plan.Success)
+        {
+            return new DataSourceFetchResult(false, plan.Message, null, 0, false, plan.Draft);
+        }
+
+        DataSourceFetchResult result = await fetcher.FetchAsync(config, secret, plan.Query, ct);
+
+        if (!result.Success)
+        {
+            // AI-written SQL fails now and then (a wrong column name, say). One repair attempt with the
+            // database's own error message fixes most of them for the price of one small extra call.
+            QueryPlan repaired = await planner.RepairAsync(source, config, secret, question, plan.Query!, result.Message, ct);
+            if (repaired.Success && repaired.Query is not null)
+            {
+                plan = repaired;
+                result = await fetcher.FetchAsync(config, secret, plan.Query, ct);
+            }
+        }
+
+        if (!result.Success)
+        {
+            return result with { Message = $"{result.Message} (query: {Shorten(plan.Query!)})", Query = plan.Query };
+        }
+
+        // Tell the model which query produced these numbers - it answers more accurately with that
+        // stated, and the admin can read it in the fetch message.
+        string content = $"Query used:\n{plan.Query}\n\nResult:\n{result.ContentText}";
+        return result with
+        {
+            Message = $"{result.Message} Query: {Shorten(plan.Query!)}",
+            ContentText = content,
+            CharCount = content.Length,
+            Query = plan.Query,
+        };
+    }
+
+    private static string Shorten(string query)
+    {
+        string single = string.Join(' ', query.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return single.Length > 300 ? single[..300] + "..." : single;
+    }
+
+    public async Task<Reporting.ReportFile> ExportMessageDataAsync(
+        long messageId, int userId, string? username, string format, CancellationToken ct = default)
+    {
+        if (!string.Equals(format, "xlsx", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(format, "csv", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new AppException("Choose xlsx or csv.");
+        }
+
+        ChatMessage message = await db.ChatMessages.AsNoTracking().FirstOrDefaultAsync(m => m.MessageId == messageId, ct)
+            ?? throw AppException.NotFound("Message not found");
+
+        ChatSession session = await db.ChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.SessionId == message.SessionId, ct)
+            ?? throw AppException.NotFound("Conversation not found");
+
+        if (session.UserId != userId)
+        {
+            throw AppException.Forbidden("Only the person who asked can download the data behind this answer.");
+        }
+
+        if (string.IsNullOrWhiteSpace(message.DataExportQuery) || session.DataSourceId is not { } sourceId)
+        {
+            throw AppException.NotFound("This answer has no extra data to download.");
+        }
+
+        DataSourceGrant grant = await db.DataSourceGrants.AsNoTracking()
+            .FirstOrDefaultAsync(g => g.SourceId == sourceId && g.UserId == userId && g.IsActive, ct)
+            ?? throw AppException.Forbidden("You no longer have access to this data source.");
+
+        if (!string.IsNullOrWhiteSpace(grant.ScopeFilter))
+        {
+            throw AppException.Forbidden("Your access to this data source is restricted - full downloads are not available.");
+        }
+
+        DataSource source = await db.DataSources.AsNoTracking().FirstOrDefaultAsync(s => s.SourceId == sourceId, ct)
+            ?? throw AppException.NotFound("Data source not found");
+
+        if (!source.IsActive) throw new AppException("This data source has been deactivated by an administrator.");
+
+        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
+        string? secret = Unprotect(source.EncryptedSecret);
+        bool rest = string.Equals(source.SourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase)
+                    && SupabaseMode.Resolve(config) == SupabaseMode.Rest;
+
+        // The stored query was checked when it was written; check it again before it runs a second time.
+        HashSet<string> allowed = QuerySchema.ParseAllowed(config.GetValueOrDefault("allowedTables", ""));
+        (string? query, string? problem) = rest
+            ? QueryValidator.ValidateRest(message.DataExportQuery, allowed, new HashSet<string>(), DataSourceFetchLimits.ExportMaxRows)
+            : QueryValidator.ValidateSql(message.DataExportQuery, allowed);
+
+        if (query is null) throw new AppException($"This query can no longer be run: {problem}");
+
+        // The chat limits this query to a few hundred rows; the download should not.
+        if (!rest) query = StripRowLimit(query);
+
+        var exportConfig = new Dictionary<string, string>(config, StringComparer.OrdinalIgnoreCase)
+        {
+            ["queryMode"] = "Fixed",
+            [DataSourceFetchLimits.ExportMarker] = "1",
+        };
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromMinutes(Math.Max(5, ApiConnectionTester.ResolveTimeout(config).TotalMinutes)));
+
+        FabricWarehouseQueryResult result;
+        try
+        {
+            if (string.Equals(source.SourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase))
+            {
+                result = await SupabaseQuery.ExecuteAsync(
+                    httpClientFactory.CreateClient(ApiConnectionTester.HttpClientName), exportConfig, secret, query, timeoutCts.Token);
+            }
+            else if (string.Equals(source.SourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase)
+                     && DataLakeMode.Resolve(config) == DataLakeMode.Warehouse)
+            {
+                if (string.IsNullOrWhiteSpace(secret)) throw new AppException("No client secret is configured for this data source.");
+
+                result = await FabricWarehouseQuery.ExecuteAsync(
+                    httpClientFactory.CreateClient(PowerBiConnectionTester.HttpClientName),
+                    config.GetValueOrDefault("tenantId", "").Trim(), config.GetValueOrDefault("clientId", "").Trim(),
+                    secret, exportConfig, query, timeoutCts.Token);
+            }
+            else
+            {
+                throw new AppException("This type of data source does not support full downloads.");
+            }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new AppException("The query took too long to run for a full download. Narrow the question and try again.");
+        }
+
+        if (!result.Success || result.Tables is null)
+        {
+            throw new AppException($"The download could not be prepared: {result.Message}");
+        }
+
+        (byte[] content, string contentType, string extension) = DataExportWriter.Build(
+            result.Tables, query, source.SourceName, format, result.Truncated, DataSourceFetchLimits.ExportMaxRows);
+
+        int rows = result.Tables.Sum(t => t.Rows.Count);
+
+        await audit.LogAsync(AuditCategories.Chat, AuditActions.DataSourceExported, userId, username,
+            $"Downloaded {rows:N0} row(s) from \"{source.SourceName}\" as {extension} (answer {messageId})",
+            isSuccess: true, ct);
+
+        string safeName = new string(source.SourceName.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()).Trim('_');
+        if (safeName.Length == 0) safeName = "data";
+
+        return new Reporting.ReportFile($"{safeName}-{DateTime.Now:yyyyMMdd-HHmm}.{extension}", contentType, content);
+    }
+
+    /// <summary>Removes a trailing LIMIT n or a leading TOP n from a single SELECT so the download is not capped.</summary>
+    private static string StripRowLimit(string sql)
+    {
+        sql = System.Text.RegularExpressions.Regex.Replace(
+            sql, @"\s+LIMIT\s+\d+\s*$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(
+            sql, @"(?<=\bSELECT\s)(\s*DISTINCT\s+)?TOP\s*\(?\s*\d+\s*\)?\s+", "$1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    public async Task<DataSourcePreviewResult> PreviewQueryAsync(
+        int sourceId, string query, int? maxRows, string? username, CancellationToken ct = default)
+    {
+        DataSource source = await db.DataSources.AsNoTracking().FirstOrDefaultAsync(s => s.SourceId == sourceId, ct)
+            ?? throw AppException.NotFound("Data source not found");
+
+        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
+
+        bool supported = string.Equals(source.SourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase)
+                         && SupabaseMode.Resolve(config) == SupabaseMode.Sql
+                         || string.Equals(source.SourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase)
+                            && DataLakeMode.Resolve(config) == DataLakeMode.Warehouse;
+
+        if (!supported)
+        {
+            throw new AppException("Query preview is available for Supabase (SQL mode) and Fabric Warehouse sources.");
+        }
+
+        string? problem = QueryValidator.ValidateAdminSql(query);
+        if (problem is not null) throw new AppException($"The query was not run: {problem}");
+
+        if (!_fetchers.TryGetValue(source.SourceType, out IDataSourceFetcher? fetcher))
+        {
+            throw new AppException($"No fetcher is registered for source type \"{source.SourceType}\".");
+        }
+
+        int rows = Math.Clamp(maxRows ?? 30, 1, 200);
+        var previewConfig = new Dictionary<string, string>(config, StringComparer.OrdinalIgnoreCase)
+        {
+            ["queryMode"] = "Generated",
+            ["generatedMaxRows"] = rows.ToString(),
+            ["generatedMaxChars"] = "60000",
+        };
+
+        DataSourceFetchResult result = await fetcher.FetchAsync(previewConfig, Unprotect(source.EncryptedSecret), query.Trim().TrimEnd(';'), ct);
+
+        await audit.LogAsync(AuditCategories.Admin, AuditActions.DataSourceTested, null, username,
+            $"Previewed a query on \"{source.SourceName}\" (#{sourceId}): {result.Message}", result.Success, ct);
+
+        return new DataSourcePreviewResult(
+            result.Success, result.Message, result.ContentText, result.Success ? CountRows(result.ContentText) : null, result.Truncated);
+    }
+
+    private static int CountRows(string? markdown)
+        => string.IsNullOrEmpty(markdown) ? 0 : Math.Max(0, markdown.Split('\n', StringSplitOptions.RemoveEmptyEntries).Count(l => l.StartsWith("| ")) - 2);
 
     public async Task<DataSourceFetchStatusDto> GetFetchStatusAsync(Guid sessionId, CancellationToken ct = default)
     {
@@ -507,5 +784,5 @@ public class DataSourceService(
         HasSecret: !string.IsNullOrEmpty(s.EncryptedSecret),
         s.IsActive, activeGrantCount,
         s.CreatedAt, s.CreatedBy, s.UpdatedAt, s.UpdatedBy,
-        s.RagCategoryId, s.RagSubCategoryId);
+        s.CategoryId, s.SubCategoryId);
 }

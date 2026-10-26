@@ -13,8 +13,7 @@ using Microsoft.EntityFrameworkCore;
 namespace MgtAiAuthen.Api.Controllers;
 
 /// <summary>
-/// Administrator tools for RAG knowledge bases: the Category / Sub Category tree used to organise
-/// them, "Create RAG" (OCR a PDF or image with an AI model into searchable chunks) and a JSONL
+/// Administrator tools for RAG knowledge bases: "Create RAG" (OCR a PDF or image with an AI model into searchable chunks) and a JSONL
 /// export that can be loaded into Microsoft Fabric.
 /// </summary>
 [ApiController]
@@ -23,176 +22,6 @@ namespace MgtAiAuthen.Api.Controllers;
 public class AdminRagController(
     AppDbContext db, IAuditService audit, IRagCreateService create) : ControllerBase
 {
-    // ---------------------------------------------------------------- categories
-
-    [HttpGet("categories")]
-    public async Task<ActionResult<IReadOnlyList<RagCategoryDto>>> GetCategories(CancellationToken ct)
-    {
-        List<RagCategory> categories = await db.RagCategories.AsNoTracking()
-            .Include(c => c.SubCategories)
-            .OrderBy(c => c.CategoryName)
-            .ToListAsync(ct);
-
-        List<(int? Category, int? Sub)> assignments = (await db.DataSources.AsNoTracking()
-                .Where(s => s.SourceType == DataSourceTypes.Rag)
-                .Select(s => new { s.RagCategoryId, s.RagSubCategoryId })
-                .ToListAsync(ct))
-            .Select(x => (x.RagCategoryId, x.RagSubCategoryId))
-            .ToList();
-
-        return Ok(categories.Select(c => new RagCategoryDto(
-            c.CategoryId, c.CategoryName, c.Description, c.IsActive,
-            assignments.Count(a => a.Category == c.CategoryId),
-            c.SubCategories.OrderBy(s => s.SubCategoryName).Select(s => new RagSubCategoryDto(
-                s.SubCategoryId, s.CategoryId, s.SubCategoryName, s.Description, s.IsActive,
-                assignments.Count(a => a.Sub == s.SubCategoryId))).ToList())).ToList());
-    }
-
-    [HttpPost("categories")]
-    public async Task<ActionResult<RagCategoryDto>> CreateCategory(RagCategoryRequest request, CancellationToken ct)
-    {
-        string name = request.Name.Trim();
-        if (await db.RagCategories.AnyAsync(c => c.CategoryName == name, ct))
-        {
-            throw AppException.Conflict($"A category named \"{name}\" already exists");
-        }
-
-        var entity = new RagCategory
-        {
-            CategoryName = name,
-            Description = request.Description?.Trim(),
-            IsActive = request.IsActive,
-            CreatedBy = User.GetUsername(),
-        };
-
-        db.RagCategories.Add(entity);
-        await db.SaveChangesAsync(ct);
-        await LogAsync($"Created RAG category #{entity.CategoryId} \"{name}\"", ct);
-
-        return Ok(new RagCategoryDto(entity.CategoryId, entity.CategoryName, entity.Description, entity.IsActive, 0, []));
-    }
-
-    [HttpPut("categories/{id:int}")]
-    public async Task<IActionResult> UpdateCategory(int id, RagCategoryRequest request, CancellationToken ct)
-    {
-        RagCategory entity = await db.RagCategories.FirstOrDefaultAsync(c => c.CategoryId == id, ct)
-            ?? throw AppException.NotFound("Category not found");
-
-        string name = request.Name.Trim();
-        if (await db.RagCategories.AnyAsync(c => c.CategoryName == name && c.CategoryId != id, ct))
-        {
-            throw AppException.Conflict($"A category named \"{name}\" already exists");
-        }
-
-        entity.CategoryName = name;
-        entity.Description = request.Description?.Trim();
-        entity.IsActive = request.IsActive;
-        entity.UpdatedAt = DateTime.Now;
-        entity.UpdatedBy = User.GetUsername();
-
-        await db.SaveChangesAsync(ct);
-        await LogAsync($"Updated RAG category #{id} \"{name}\"", ct);
-        return NoContent();
-    }
-
-    [HttpDelete("categories/{id:int}")]
-    public async Task<IActionResult> DeleteCategory(int id, CancellationToken ct)
-    {
-        RagCategory entity = await db.RagCategories.FirstOrDefaultAsync(c => c.CategoryId == id, ct)
-            ?? throw AppException.NotFound("Category not found");
-
-        // Deleting a category takes its sub categories with it, and any RAG filed under either goes
-        // back to "Uncategorised" — the RAG and its chunks are never touched.
-        int unfiled = 0;
-        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-        {
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-
-            unfiled = await db.DataSources
-                .Where(s => s.RagCategoryId == id)
-                .ExecuteUpdateAsync(u => u.SetProperty(s => s.RagCategoryId, (int?)null)
-                                          .SetProperty(s => s.RagSubCategoryId, (int?)null), ct);
-            await db.RagSubCategories.Where(s => s.CategoryId == id).ExecuteDeleteAsync(ct);
-            await db.RagCategories.Where(c => c.CategoryId == id).ExecuteDeleteAsync(ct);
-
-            await tx.CommitAsync(ct);
-        });
-
-        await LogAsync($"Deleted RAG category #{id} \"{entity.CategoryName}\" (and its sub categories; {unfiled} RAG(s) set to uncategorised)", ct);
-        return NoContent();
-    }
-
-    [HttpPost("subcategories")]
-    public async Task<ActionResult<RagSubCategoryDto>> CreateSubCategory(RagSubCategoryRequest request, CancellationToken ct)
-    {
-        if (!await db.RagCategories.AnyAsync(c => c.CategoryId == request.CategoryId, ct))
-        {
-            throw AppException.NotFound("Category not found");
-        }
-
-        string name = request.Name.Trim();
-        if (await db.RagSubCategories.AnyAsync(s => s.CategoryId == request.CategoryId && s.SubCategoryName == name, ct))
-        {
-            throw AppException.Conflict($"This category already has a sub category named \"{name}\"");
-        }
-
-        var entity = new RagSubCategory
-        {
-            CategoryId = request.CategoryId,
-            SubCategoryName = name,
-            Description = request.Description?.Trim(),
-            IsActive = request.IsActive,
-            CreatedBy = User.GetUsername(),
-        };
-
-        db.RagSubCategories.Add(entity);
-        await db.SaveChangesAsync(ct);
-        await LogAsync($"Created RAG sub category #{entity.SubCategoryId} \"{name}\" under category #{request.CategoryId}", ct);
-
-        return Ok(new RagSubCategoryDto(entity.SubCategoryId, entity.CategoryId, name, entity.Description, entity.IsActive, 0));
-    }
-
-    [HttpPut("subcategories/{id:int}")]
-    public async Task<IActionResult> UpdateSubCategory(int id, RagSubCategoryRequest request, CancellationToken ct)
-    {
-        RagSubCategory entity = await db.RagSubCategories.FirstOrDefaultAsync(s => s.SubCategoryId == id, ct)
-            ?? throw AppException.NotFound("Sub category not found");
-
-        string name = request.Name.Trim();
-        if (await db.RagSubCategories.AnyAsync(
-                s => s.CategoryId == entity.CategoryId && s.SubCategoryName == name && s.SubCategoryId != id, ct))
-        {
-            throw AppException.Conflict($"This category already has a sub category named \"{name}\"");
-        }
-
-        entity.SubCategoryName = name;
-        entity.Description = request.Description?.Trim();
-        entity.IsActive = request.IsActive;
-        entity.UpdatedAt = DateTime.Now;
-        entity.UpdatedBy = User.GetUsername();
-
-        await db.SaveChangesAsync(ct);
-        await LogAsync($"Updated RAG sub category #{id} \"{name}\"", ct);
-        return NoContent();
-    }
-
-    [HttpDelete("subcategories/{id:int}")]
-    public async Task<IActionResult> DeleteSubCategory(int id, CancellationToken ct)
-    {
-        RagSubCategory entity = await db.RagSubCategories.FirstOrDefaultAsync(s => s.SubCategoryId == id, ct)
-            ?? throw AppException.NotFound("Sub category not found");
-
-        // RAGs filed here keep their category but lose the sub category.
-        await db.DataSources
-            .Where(s => s.RagSubCategoryId == id)
-            .ExecuteUpdateAsync(u => u.SetProperty(s => s.RagSubCategoryId, (int?)null), ct);
-
-        db.RagSubCategories.Remove(entity);
-        await db.SaveChangesAsync(ct);
-        await LogAsync($"Deleted RAG sub category #{id} \"{entity.SubCategoryName}\"", ct);
-        return NoContent();
-    }
-
     // ---------------------------------------------------------------- RAG sources
 
     [HttpGet("sources")]
@@ -209,15 +38,8 @@ public class AdminRagController(
                 .ToListAsync(ct))
             .ToDictionary(x => x.SourceId);
 
-        Dictionary<int, string> categoryNames = await db.RagCategories.AsNoTracking()
-            .ToDictionaryAsync(c => c.CategoryId, c => c.CategoryName, ct);
-        Dictionary<int, string> subNames = await db.RagSubCategories.AsNoTracking()
-            .ToDictionaryAsync(s => s.SubCategoryId, s => s.SubCategoryName, ct);
-
         return Ok(sources.Select(s => new RagSourceDto(
             s.SourceId, s.SourceName, s.Description, s.IsActive,
-            s.RagCategoryId, s.RagCategoryId is { } c ? categoryNames.GetValueOrDefault(c) : null,
-            s.RagSubCategoryId, s.RagSubCategoryId is { } sc ? subNames.GetValueOrDefault(sc) : null,
             chunkStats.TryGetValue(s.SourceId, out var st) ? st.Chunks : 0,
             chunkStats.TryGetValue(s.SourceId, out var st2) ? st2.Files : 0,
             s.CreatedAt)).ToList());
@@ -235,34 +57,14 @@ public class AdminRagController(
             throw AppException.Conflict($"A data source named \"{name}\" already exists");
         }
 
-        if (request.CategoryId is { } categoryId)
-        {
-            if (!await db.RagCategories.AnyAsync(c => c.CategoryId == categoryId, ct))
-            {
-                throw new AppException("That category does not exist.");
-            }
-
-            if (request.SubCategoryId is { } subId
-                && !await db.RagSubCategories.AnyAsync(s => s.SubCategoryId == subId && s.CategoryId == categoryId, ct))
-            {
-                throw new AppException("That sub category does not belong to the chosen category.");
-            }
-        }
-        else if (request.SubCategoryId is not null)
-        {
-            throw new AppException("Choose a category before a sub category.");
-        }
-
         source.SourceName = name;
         source.Description = request.Description?.Trim();
         source.IsActive = request.IsActive;
-        source.RagCategoryId = request.CategoryId;
-        source.RagSubCategoryId = request.SubCategoryId;
         source.UpdatedAt = DateTime.Now;
         source.UpdatedBy = User.GetUsername();
 
         await db.SaveChangesAsync(ct);
-        await LogAsync($"Updated RAG #{id} \"{name}\" ({(request.IsActive ? "active" : "inactive")}, category {request.CategoryId?.ToString() ?? "none"} / sub category {request.SubCategoryId?.ToString() ?? "none"})", ct, AuditActions.DataSourceUpdated);
+        await LogAsync($"Updated RAG #{id} \"{name}\" ({(request.IsActive ? "active" : "inactive")})", ct, AuditActions.DataSourceUpdated);
         return NoContent();
     }
 
@@ -317,7 +119,7 @@ public class AdminRagController(
 
         RagJobDto job = await create.StartAsync(
             new RagCreateInput(
-                form.SourceId, form.SourceName, form.Description, form.CategoryId, form.SubCategoryId,
+                form.SourceId, form.SourceName, form.Description,
                 form.Model, form.PagesPerBatch, files),
             User.GetUsername(), ct);
 
@@ -462,11 +264,11 @@ public class AdminRagController(
             .FirstOrDefaultAsync(s => s.SourceId == id && s.SourceType == DataSourceTypes.Rag, ct)
             ?? throw AppException.NotFound("RAG not found");
 
-        string? category = source.RagCategoryId is { } c
-            ? await db.RagCategories.AsNoTracking().Where(x => x.CategoryId == c).Select(x => x.CategoryName).FirstOrDefaultAsync(ct)
+        string? category = source.CategoryId is { } c
+            ? await db.DataSourceCategories.AsNoTracking().Where(x => x.CategoryId == c).Select(x => x.CategoryName).FirstOrDefaultAsync(ct)
             : null;
-        string? subCategory = source.RagSubCategoryId is { } sc
-            ? await db.RagSubCategories.AsNoTracking().Where(x => x.SubCategoryId == sc).Select(x => x.SubCategoryName).FirstOrDefaultAsync(ct)
+        string? subCategory = source.SubCategoryId is { } sc
+            ? await db.DataSourceSubCategories.AsNoTracking().Where(x => x.SubCategoryId == sc).Select(x => x.SubCategoryName).FirstOrDefaultAsync(ct)
             : null;
 
         List<RagChunk> chunks = await db.RagChunks.AsNoTracking()
@@ -511,6 +313,6 @@ public class AdminRagController(
         return new ExportBundle(source, category, subCategory, chunks, Encoding.UTF8.GetBytes(sb.ToString()), safeName);
     }
 
-    private Task LogAsync(string detail, CancellationToken ct, string action = AuditActions.RagCategoryChanged)
+    private Task LogAsync(string detail, CancellationToken ct, string action = AuditActions.DataSourceUpdated)
         => audit.LogAsync(AuditCategories.Admin, action, User.GetUserId(), User.GetUsername(), detail, isSuccess: true, ct);
 }

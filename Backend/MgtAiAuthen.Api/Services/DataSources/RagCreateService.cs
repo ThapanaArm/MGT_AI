@@ -12,7 +12,7 @@ namespace MgtAiAuthen.Api.Services.DataSources;
 public record RagUploadFile(string FileName, string ContentType, byte[] Content);
 
 public record RagCreateInput(
-    int? SourceId, string? SourceName, string? Description, int? CategoryId, int? SubCategoryId,
+    int? SourceId, string? SourceName, string? Description,
     string Model, int PagesPerBatch, IReadOnlyList<RagUploadFile> Files);
 
 /// <summary>
@@ -147,24 +147,6 @@ public class RagCreateService(IServiceScopeFactory scopes, ILogger<RagCreateServ
             throw AppException.Conflict($"A data source named \"{name}\" already exists — pick it from the list to add to it.");
         }
 
-        if (input.CategoryId is { } categoryId)
-        {
-            if (!await db.RagCategories.AnyAsync(c => c.CategoryId == categoryId, ct))
-            {
-                throw new AppException("That category does not exist.");
-            }
-
-            if (input.SubCategoryId is { } subId
-                && !await db.RagSubCategories.AnyAsync(s => s.SubCategoryId == subId && s.CategoryId == categoryId, ct))
-            {
-                throw new AppException("That sub category does not belong to the chosen category.");
-            }
-        }
-        else if (input.SubCategoryId is not null)
-        {
-            throw new AppException("Choose a category before a sub category.");
-        }
-
         var source = new DataSource
         {
             SourceName = name,
@@ -174,8 +156,6 @@ public class RagCreateService(IServiceScopeFactory scopes, ILogger<RagCreateServ
             IsActive = true,
             CreatedAt = DateTime.Now,
             CreatedBy = startedBy,
-            RagCategoryId = input.CategoryId,
-            RagSubCategoryId = input.SubCategoryId,
         };
 
         db.DataSources.Add(source);

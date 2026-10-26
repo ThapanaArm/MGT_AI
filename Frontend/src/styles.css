@@ -28,6 +28,52 @@
   --font: 'Sarabun', 'Segoe UI', 'Noto Sans Thai', system-ui, -apple-system, sans-serif;
 }
 
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0b1220;
+  --surface: #121b2e;
+  --surface-2: #182339;
+  --border: #26344f;
+  --border-strong: #38496b;
+  --text: #e2e8f0;
+  --text-muted: #9fb0c8;
+  --text-faint: #6b7d99;
+  --brand: #14a89a;
+  --brand-dark: #2dd4bf;
+  --brand-light: #12403c;
+  --sidebar: #070d1a;
+  --sidebar-hover: #16213a;
+  --danger: #f87171;
+  --danger-bg: #3b1620;
+  --danger-border: #7f1d1d;
+  --warn: #fbbf24;
+  --warn-bg: #3a2c0a;
+  --warn-border: #78561a;
+  --info: #7cb3ff;
+  --info-bg: #10243f;
+  --info-border: #1e3f7a;
+  --ok: #4ade80;
+  --ok-bg: #0f2a1c;
+  --shadow: 0 1px 3px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 30%);
+}
+
+:root[data-theme='dark'] .badge-brand {
+  border-color: #1f6f68;
+}
+
+:root[data-theme='dark'] .badge-ok,
+:root[data-theme='dark'] .alert-ok {
+  border-color: #1d5a36;
+}
+
+:root[data-theme='dark'] .chat-suggestion-icon.tone-violet {
+  background: #2d2354;
+}
+
+:root[data-theme='dark'] .modal-backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2169,4 +2215,69 @@ tbody tr:last-child td {
 
 .project-files {
   margin-top: 12px;
+}
+
+/* ---------------------------------------------- Light / dark switch */
+
+.theme-toggle {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 56px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand);
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.theme-toggle.is-dark {
+  background: var(--brand-light);
+}
+
+.theme-toggle-icon {
+  position: relative;
+  z-index: 1;
+  opacity: 0.55;
+}
+
+.theme-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  transition: transform 0.2s;
+}
+
+.theme-toggle.is-dark .theme-toggle-knob {
+  transform: translateX(28px);
+}
+
+.sidebar-theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #cbd5e1;
+  font-size: 13px;
 }

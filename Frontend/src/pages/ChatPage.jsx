@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useOutletContext, useSearchParams } from 'react-router-dom';
 import { api, apiForm, download } from '../api/client';
 import MessageContent from '../components/MessageContent';
+import ThemeToggle from '../components/ThemeToggle';
 import {
   FILE_KIND_LABELS,
   fileKindIcon,
@@ -246,6 +247,20 @@ export default function ChatPage() {
   }
 
   /** ดาวน์โหลดรายงานของคำตอบนั้น — backend สร้างไฟล์และบันทึก audit ให้ */
+  async function exportData(messageId, format) {
+    const key = `data-${messageId}-${format}`;
+    setExporting(key);
+    setError(null);
+
+    try {
+      await download(`/api/chat/messages/${messageId}/data-export/${format}`, `data.${format}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setExporting(null);
+    }
+  }
+
   async function exportReport(messageId, format) {
     const key = `${messageId}-${format}`;
     setExporting(key);
@@ -549,6 +564,7 @@ export default function ChatPage() {
             </button>
           )}
 
+          <ThemeToggle />
         </div>
 
         {dragging && (
@@ -705,6 +721,24 @@ export default function ChatPage() {
                         title={f.title}
                       >
                         {exporting === `${message.messageId}-${f.format}` ? '…' : f.label}
+                      </button>
+                    ))}
+                  </span>
+                )}
+
+                {message.messageRole === 'assistant' && message.hasDataExport && (
+                  <span className="export-row">
+                    Download full data:
+                    {[['xlsx', 'Excel'], ['csv', 'CSV']].map(([format, label]) => (
+                      <button
+                        key={format}
+                        type="button"
+                        className="btn-link"
+                        disabled={exporting === `data-${message.messageId}-${format}`}
+                        onClick={() => exportData(message.messageId, format)}
+                        title="Runs the query again without the row limit and downloads every row"
+                      >
+                        {exporting === `data-${message.messageId}-${format}` ? '…' : label}
                       </button>
                     ))}
                   </span>
@@ -954,24 +988,8 @@ export default function ChatPage() {
               {sending ? '…' : '➤'}
             </button>
           </div>
-
-          <div className="chat-hint">
-            <span
-              className="chat-hint-info"
-              aria-hidden="true"
-              title={
-                'Never type or attach passwords, national ID numbers, or company secrets — messages and ' +
-                'text files that match a rule are blocked and logged.' +
-                (limits ? ` Supported: ${limits.allowedExtensions.join(' ')}` : '')
-              }
-            >
-              ⓘ
-            </span>
-            Conversations are logged according to company policy
-          </div>
         </form>
 
-        <div className="chat-footnote">AI can make mistakes. Please verify the sources.</div>
       </div>
 
       {showSaveProject && (

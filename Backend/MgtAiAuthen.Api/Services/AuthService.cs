@@ -207,7 +207,7 @@ public class AuthService(
             Department = department,
             // Never usable: this account signs in through the company user table only.
             PasswordHash = PasswordHasher.Hash(Convert.ToHexString(RandomNumberGenerator.GetBytes(32))),
-            UserRole = UserRoles.User,
+            UserRole = directory.IsAdminEmail(external.Email) ? UserRoles.Admin : UserRoles.User,
             IsActive = true,
             MustChangePassword = false,
             AuthSource = AuthSources.External,

@@ -60,6 +60,7 @@ public class ChatService(
     IAttachmentService attachments,
     IDataSourceService dataSources,
     IEmbeddingService embeddings,
+    ExtraAiUsage extraUsage,
     IAuditService audit,
     IHttpContextAccessor httpContextAccessor,
     IOptions<ClaudeOptions> claudeOptions,
@@ -109,7 +110,8 @@ public class ChatService(
                         a.AttachmentId, a.FileName, a.ContentType, a.FileKind, a.SizeBytes,
                         a.IsTextExtracted, a.PolicyScanned, a.Sha256, a.CreatedAt))
                     .ToList(),
-                m.CreatedAt))
+                m.CreatedAt,
+                m.DataExportQuery != null))
             .ToListAsync(ct);
     }
 
@@ -248,6 +250,9 @@ public class ChatService(
                 isSuccess: true, ct);
         }
 
+        string? queryNote = null;
+        string? exportQuery = null;
+
         if (session.DataSourceId is { } activeSourceId)
         {
             // Fetched fresh for every message (not just once at session start) so the data behind
@@ -258,8 +263,22 @@ public class ChatService(
             try
             {
                 string? perMessageOverride = await ResolvePerMessageOverrideAsync(activeSourceId, content, model, chosen.Provider, ct);
-                await dataSources.FetchForSessionAsync(
-                    session.SessionId, activeSourceId, userId, user.Username, ct, perMessageOverride);
+
+                // Only a source in "Generated" query mode reads this - a little earlier context so a short
+                // follow-up ("and last month?") can still be turned into a query.
+                string? recentContext = await BuildRecentQuestionContextAsync(session.SessionId, userMessage.MessageId, ct);
+
+                DataSourceFetchStatusDto fetched = await dataSources.FetchForSessionAsync(
+                    session.SessionId, activeSourceId, userId, user.Username, ct, perMessageOverride,
+                    new DataSourceQuestion(content, model, chosen.Provider, recentContext));
+
+                queryNote = await BuildQueryNoteAsync(fetched, ct);
+
+                // A cut-off result gets a "download full data" button: keep the query that produced it.
+                if (fetched.Success == true && fetched.Truncated == true && !string.IsNullOrWhiteSpace(fetched.Query))
+                {
+                    exportQuery = fetched.Query;
+                }
             }
             catch (Exception ex)
             {
@@ -286,7 +305,7 @@ public class ChatService(
         catch (AiBillingException ex)
         {
             await audit.LogAsync(AuditCategories.Chat, AuditActions.ChatFailed, userId, user.Username,
-                $"{chosen.Provider} account/credit problem on model {model}: " +
+                $"{chosen.Provider} account/key problem on model {model}: " +
                 $"{ex.InnerException?.Message ?? ex.Message} — " +
                 "an administrator must check the credit balance and API key",
                 isSuccess: false, ct);
@@ -320,6 +339,27 @@ public class ChatService(
                 System.Net.HttpStatusCode.BadGateway, "AI_CALL_FAILED");
         }
 
+        // The data could not be shown in full (cut off, or the query failed): put the query itself in the
+        // answer so the user can run it in the database's own editor. Done here, not left to the model,
+        // so it is there every time.
+        if (queryNote is not null)
+        {
+            reply = reply with { Text = reply.Text.TrimEnd() + "\n\n" + queryNote };
+        }
+
+        // Helper AI calls made for this message (writing the data query, choosing a query) are billed by the
+        // provider too - fold them in so the logged tokens and cost match the real bill.
+        if (extraUsage.Input + extraUsage.Output + extraUsage.CacheWrite + extraUsage.CacheRead > 0)
+        {
+            reply = reply with
+            {
+                InputTokens = reply.InputTokens + extraUsage.Input,
+                OutputTokens = reply.OutputTokens + extraUsage.Output,
+                CacheWriteTokens = reply.CacheWriteTokens + extraUsage.CacheWrite,
+                CacheReadTokens = reply.CacheReadTokens + extraUsage.CacheRead,
+            };
+        }
+
         // Compute the cost now and store it on the row, so later price changes never rewrite history.
         TokenCost cost = await costCalculator.CalculateAsync(
             reply.ModelName, reply.InputTokens, reply.OutputTokens,
@@ -327,6 +367,7 @@ public class ChatService(
 
         var assistantMessage = new ChatMessage
         {
+            DataExportQuery = exportQuery,
             SessionId = session.SessionId,
             UserId = userId,
             MessageRole = MessageRoles.Assistant,
@@ -723,18 +764,41 @@ public class ChatService(
             return await ResolveRagRetrievalAsync(sourceId, userQuestion, ct);
         }
 
-        if (!string.Equals(source.SourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase))
+        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
+
+        // A source in "Generated" query mode has the AI write the query itself (DataSourceService), so
+        // there is no fixed list to choose from.
+        if (string.Equals(config.GetValueOrDefault("queryMode", "").Trim(), "Generated", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
-        Dictionary<string, string> config = DataSourceConfig.Parse(source.ConfigJson);
-        bool isWarehouse = string.Equals(
-            config.GetValueOrDefault("connectionMode", ""), "Warehouse", StringComparison.OrdinalIgnoreCase);
+        // Fabric Warehouse and Supabase (SQL mode) both keep several SELECTs in "sqlQuery"; Supabase REST
+        // keeps one request per line in "restQuery". Same idea in each: ask the AI which ones this question needs.
+        if (string.Equals(source.SourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(config.GetValueOrDefault("connectionMode", ""), "Warehouse", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ResolveQuerySelectionAsync(
+                sourceId, SplitSqlStatements(config.GetValueOrDefault("sqlQuery", "")), ";\n", ";",
+                userQuestion, model, provider, ct);
+        }
 
-        return isWarehouse
-            ? await ResolveWarehouseQuerySelectionAsync(sourceId, config, userQuestion, model, provider, ct)
-            : null;
+        if (string.Equals(source.SourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase))
+        {
+            bool rest = string.Equals(config.GetValueOrDefault("connectionMode", ""), "Rest", StringComparison.OrdinalIgnoreCase);
+
+            return rest
+                ? await ResolveQuerySelectionAsync(
+                    sourceId,
+                    config.GetValueOrDefault("restQuery", "")
+                        .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    "\n", "", userQuestion, model, provider, ct)
+                : await ResolveQuerySelectionAsync(
+                    sourceId, SplitSqlStatements(config.GetValueOrDefault("sqlQuery", "")), ";\n", ";",
+                    userQuestion, model, provider, ct);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -743,11 +807,10 @@ public class ChatService(
     /// AI which one(s) are relevant to THIS question — so a message about product counts does not
     /// also pay to fetch and include an unrelated purchase-order listing, say.
     /// </summary>
-    private async Task<string?> ResolveWarehouseQuerySelectionAsync(
-        int sourceId, Dictionary<string, string> config, string userQuestion,
+    private async Task<string?> ResolveQuerySelectionAsync(
+        int sourceId, string[] statements, string joiner, string suffix, string userQuestion,
         string model, string provider, CancellationToken ct)
     {
-        string[] statements = SplitSqlStatements(config.GetValueOrDefault("sqlQuery", ""));
         if (statements.Length < 2)
         {
             return null;
@@ -758,12 +821,13 @@ public class ChatService(
         try
         {
             AiReply reply = await ai.CompleteAsync(
-                "You choose which of several SQL queries should run to answer a question. Reply " +
+                "You choose which of several data queries should run to answer a question. Reply " +
                 "with ONLY the number(s) of the matching quer(y/ies), comma-separated if more than " +
                 "one applies — or 0 if none clearly match, meaning run all of them. No other text, " +
                 "no explanation.",
                 [new ChatTurn(MessageRoles.User, $"Queries:\n{listing}\n\nQuestion: {userQuestion}")],
                 model, provider, ct);
+            extraUsage.Add(reply);
 
             List<int> picked = reply.Text
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -773,7 +837,7 @@ public class ChatService(
                 .ToList();
 
             // Empty, unparseable, or an explicit 0 all mean the same thing here: run everything.
-            return picked.Count == 0 ? null : string.Join(";\n", picked.Select(n => statements[n - 1])) + ";";
+            return picked.Count == 0 ? null : string.Join(joiner, picked.Select(n => statements[n - 1])) + suffix;
         }
         catch (Exception ex)
         {
@@ -862,6 +926,76 @@ public class ChatService(
     /// readable. The content itself was already pulled a moment ago in SendAsync (fresh on every
     /// message) — this only resends the cached result, the same way project files are resent every call.
     /// </summary>
+    /// <summary>
+    /// For a source in Generated query mode: when the result was truncated, or the query failed, returns a
+    /// block showing the query so it can be copied into Supabase / the SQL endpoint. Null otherwise.
+    /// </summary>
+    private async Task<string?> BuildQueryNoteAsync(DataSourceFetchStatusDto fetched, CancellationToken ct)
+    {
+        bool truncated = fetched.Success == true && fetched.Truncated == true;
+        bool failed = fetched.Success == false;
+
+        if (string.IsNullOrWhiteSpace(fetched.Query) || !(truncated || failed) || fetched.SourceId is not { } sourceId)
+        {
+            return null;
+        }
+
+        string? type = await db.DataSources.AsNoTracking()
+            .Where(s => s.SourceId == sourceId).Select(s => s.SourceType).FirstOrDefaultAsync(ct);
+
+        bool rest = false;
+        string where = "ฐานข้อมูลต้นทาง";
+
+        if (string.Equals(type, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase))
+        {
+            DataSource? source = await db.DataSources.AsNoTracking().FirstOrDefaultAsync(s => s.SourceId == sourceId, ct);
+            Dictionary<string, string> config = DataSourceConfig.Parse(source?.ConfigJson);
+            rest = SupabaseMode.Resolve(config) == SupabaseMode.Rest;
+            where = rest ? "Supabase REST API" : "Supabase (SQL Editor)";
+        }
+        else if (string.Equals(type, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase))
+        {
+            where = "Fabric Warehouse (SQL query editor)";
+        }
+
+        string query = fetched.Query!.Trim();
+
+        if (truncated && !rest)
+        {
+            // The chat caps the rows; the copy for the user should not.
+            query = System.Text.RegularExpressions.Regex.Replace(
+                query, @"\s+LIMIT\s+\d+\s*$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            query = System.Text.RegularExpressions.Regex.Replace(
+                query, @"(?<=\bSELECT\s)(\s*DISTINCT\s+)?TOP\s*\(?\s*\d+\s*\)?\s+", "$1",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        }
+
+        string intro = failed
+            ? $"**ดึงข้อมูลไม่สำเร็จ** ({fetched.Message?.Split(" (query:")[0]}) — นี่คือ Query ที่ระบบสร้าง ตรวจแก้แล้วนำไปรันใน {where} ได้:"
+            : $"**ข้อมูลที่แสดงยังไม่ครบ** (ผลลัพธ์ถูกจำกัดขนาดในแชท เพื่อไม่ให้ใช้ token สูง) — คัดลอก Query นี้ไปรันใน {where} เพื่อดูข้อมูลทั้งหมดได้ หรือกด **Download full data** ใต้คำตอบนี้เพื่อรับข้อมูลทั้งหมดเป็น Excel / CSV:";
+
+        string lang = rest ? "text" : "sql";
+        string body = rest ? string.Join("\n", query.Split('\n').Select(l => "GET /rest/v1/" + l.Trim())) : query;
+
+        return $"---\n{intro}\n\n```{lang}\n{body}\n```";
+    }
+
+    private async Task<string?> BuildRecentQuestionContextAsync(Guid sessionId, long currentMessageId, CancellationToken ct)
+    {
+        List<string> earlier = await db.ChatMessages.AsNoTracking()
+            .Where(m => m.SessionId == sessionId && m.MessageRole == MessageRoles.User && !m.IsBlocked
+                        && m.MessageId != currentMessageId)
+            .OrderByDescending(m => m.MessageId)
+            .Take(2)
+            .Select(m => m.Content)
+            .ToListAsync(ct);
+
+        if (earlier.Count == 0) return null;
+
+        earlier.Reverse();
+        return string.Join("\n", earlier.Select(q => "- " + (q.Length > 300 ? q[..300] : q)));
+    }
+
     private async Task<List<ChatTurn>> BuildDataSourceContextTurnsAsync(
         Guid sessionId, int? dataSourceId, CancellationToken ct)
     {
@@ -874,7 +1008,19 @@ public class ChatService(
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.SessionId == sessionId, ct);
 
-        if (fetch is null || !fetch.Success || string.IsNullOrEmpty(fetch.ContentText))
+        if (fetch is not null && !fetch.Success && !string.IsNullOrWhiteSpace(fetch.Message))
+        {
+            // Say so, instead of leaving the model to answer as if it had the data (it would guess figures).
+            return
+            [
+                new ChatTurn(MessageRoles.User,
+                    "The data source could not be queried for this message: " + fetch.Message +
+                    " Tell the user the data could not be retrieved; do not invent figures."),
+                new ChatTurn(MessageRoles.Assistant, "Understood - I will say the data was not available."),
+            ];
+        }
+
+        if (fetch is null || string.IsNullOrEmpty(fetch.ContentText))
         {
             return [];
         }
@@ -1201,7 +1347,7 @@ public class ChatService(
         m.CacheWriteTokens, m.CacheReadTokens, m.TotalTokens,
         m.TotalCostUsd, m.TotalCostThb, m.LatencyMs,
         files?.Select(ToAttachmentDto).ToList() ?? [],
-        m.CreatedAt);
+        m.CreatedAt, m.DataExportQuery is not null);
 
     internal static ChatAttachmentDto ToAttachmentDto(ChatAttachment a) => new(
         a.AttachmentId, a.FileName, a.ContentType, a.FileKind, a.SizeBytes,

@@ -144,7 +144,9 @@ public record ChatMessageDto(
     decimal? TotalCostThb,
     int? LatencyMs,
     IReadOnlyList<ChatAttachmentDto> Attachments,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    /// <summary>True when the full data behind this answer can be downloaded (its chat result was cut off).</summary>
+    bool HasDataExport = false);
 
 /// <summary>ข้อจำกัดการอัพโหลด — frontend ใช้ตรวจก่อนส่งเพื่อไม่ให้ผู้ใช้รอเสียเวลา</summary>
 public record UploadLimitsDto(
@@ -561,8 +563,8 @@ public record DataSourceDto(
     string? CreatedBy,
     DateTime? UpdatedAt,
     string? UpdatedBy,
-    int? RagCategoryId = null,
-    int? RagSubCategoryId = null);
+    int? CategoryId = null,
+    int? SubCategoryId = null);
 
 public record DataSourceUpsertRequest
 {
@@ -579,6 +581,10 @@ public record DataSourceUpsertRequest
 
     /// <summary>ค่าที่ไม่ใช่ความลับ — คีย์ที่ต้องมีต่างกันตาม SourceType (ดู DataSourceConfig.RequiredKeys)</summary>
     public Dictionary<string, string> Config { get; init; } = new();
+
+    /// <summary>Optional Category / Sub Category from the registry's category tree (null = uncategorised).</summary>
+    public int? CategoryId { get; init; }
+    public int? SubCategoryId { get; init; }
 
     /// <summary>
     /// API key / client secret / app secret เป็น plain text ตอนส่งเข้ามาเท่านั้น — เข้ารหัสก่อน
@@ -654,7 +660,9 @@ public record DataSourceFetchStatusDto(
     string? Message,
     DateTime? FetchedAt,
     int? CharCount,
-    bool? Truncated);
+    bool? Truncated,
+    /// <summary>The AI-written query that produced (or failed to produce) this result - Generated query mode only.</summary>
+    string? Query = null);
 
 // ---------------------------------------------------------------- Projects (self-service)
 

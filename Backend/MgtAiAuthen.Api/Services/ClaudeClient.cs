@@ -129,6 +129,20 @@ public class ClaudeClient : IAiProvider
                 "The AI service is temporarily overloaded. Please send your message again in a " +
                 "moment (your question has already been logged).", ex, ProviderName);
         }
+        catch (Exception ex) when (ex is AnthropicUnauthorizedException or AnthropicForbiddenException)
+        {
+            // 401/403 = Anthropic does not accept the API key at all (typo, revoked, rotated, or no access
+            // to the model). Nothing the user sent can cause it, so it must not fall into the generic
+            // "AI call failed" - an administrator has to replace the key.
+            _logger.LogError(ex,
+                "Anthropic rejected the API key (Claude:ApiKey / ANTHROPIC_API_KEY) - an administrator must replace it");
+
+            throw new AiBillingException(
+                "The AI service is unavailable because Anthropic rejected the Claude API key " +
+                "(invalid, revoked, or without access to this model). Please ask an administrator " +
+                "to replace it - this is not caused by your message or files. Other models " +
+                "(OpenAI, Gemini, Qwen) can be chosen in the meantime.", ex, ProviderName);
+        }
         catch (AnthropicBadRequestException ex)
         {
             // Anthropic uses 400 invalid_request_error for both bad input and exhausted credit,

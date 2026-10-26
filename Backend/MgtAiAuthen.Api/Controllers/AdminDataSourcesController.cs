@@ -81,6 +81,13 @@ public class AdminDataSourcesController(IDataSourceService dataSources, IRagImpo
         return Ok(result);
     }
 
+    /// <summary>Runs one read-only query and returns the first rows (Supabase SQL mode / Fabric Warehouse) - to try a query before saving it on the source.</summary>
+    [HttpPost("{id:int}/preview")]
+    [ProducesResponseType(typeof(DataSourcePreviewResult), StatusCodes.Status200OK)]
+    public async Task<ActionResult<DataSourcePreviewResult>> Preview(
+        int id, DataSourcePreviewRequest request, CancellationToken ct)
+        => Ok(await dataSources.PreviewQueryAsync(id, request.Query, request.MaxRows, User.GetUsername(), ct));
+
     // ---------------------------------------------------------------- สิทธิ์
 
     /// <summary>ดูสิทธิ์ทั้งหมด กรองได้ตามแหล่งข้อมูลและ/หรือผู้ใช้ (รวมที่เพิกถอนแล้วเพื่อดู history)</summary>

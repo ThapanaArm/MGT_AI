@@ -189,6 +189,20 @@ public class ChatController(
         return File(file.Content, file.ContentType, file.FileName);
     }
 
+    /// <summary>
+    /// "Download full data": the complete result of the query behind an answer whose chat result was cut
+    /// off - xlsx | csv. Owner only, and the download is written to the audit log.
+    /// </summary>
+    [HttpGet("messages/{messageId:long}/data-export/{format}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ExportData(long messageId, string format, CancellationToken ct)
+    {
+        ReportFile file = await dataSources.ExportMessageDataAsync(
+            messageId, User.GetUserId(), User.GetUsername(), format, ct);
+
+        return File(file.Content, file.ContentType, file.FileName);
+    }
+
     /// <summary>รูปแบบไฟล์ที่ส่งออกได้ — frontend ใช้สร้างปุ่ม</summary>
     [HttpGet("export-formats")]
     public IActionResult ExportFormats() => Ok(ReportFormats.All);

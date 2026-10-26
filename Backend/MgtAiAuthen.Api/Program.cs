@@ -192,6 +192,8 @@ builder.Services.AddSingleton<IDataSourceFetcher, LocalFolderFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, ApiFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, SharePointFetcher>();
 builder.Services.AddSingleton<IDataSourceFetcher, PowerBiFetcher>();
+builder.Services.AddSingleton<IDataSourceConnectionTester, SupabaseConnectionTester>();
+builder.Services.AddSingleton<IDataSourceFetcher, SupabaseFetcher>();
 // Scoped, not Singleton like the testers/fetchers above — this one needs AppDbContext directly
 // (its "config" is imported RagChunks rows, not a URL/tenant it can test statelessly).
 builder.Services.AddScoped<IDataSourceConnectionTester, RagConnectionTester>();
@@ -199,6 +201,8 @@ builder.Services.AddScoped<IDataSourceFetcher, RagFetcher>();
 builder.Services.AddSingleton<IEmbeddingService, OpenAiEmbeddingService>();
 builder.Services.AddScoped<IRagImportService, RagImportService>();
 builder.Services.AddSingleton<IRagCreateService, RagCreateService>();
+builder.Services.AddScoped<ExtraAiUsage>();
+builder.Services.AddScoped<IQueryPlanner, GeneratedQueryPlanner>();
 builder.Services.AddScoped<IDataSourceService, DataSourceService>();
 
 // Self-service Projects and Skills — any signed-in employee, not just Admin.

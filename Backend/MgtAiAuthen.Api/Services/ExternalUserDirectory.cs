@@ -25,6 +25,9 @@ public interface IExternalUserDirectory
     bool Enabled { get; }
     bool AllowLocalFallback { get; }
 
+    /// <summary>True when this email is listed in ExternalAuth:AdminEmails.</summary>
+    bool IsAdminEmail(string? email);
+
     Task<ExternalLoginResult> AuthenticateAsync(string identifier, string password, CancellationToken ct = default);
 }
 
@@ -52,6 +55,10 @@ public partial class ExternalUserDirectory : IExternalUserDirectory
     public bool Enabled => _options.Enabled;
 
     public bool AllowLocalFallback => _options.AllowLocalFallback;
+
+    public bool IsAdminEmail(string? email)
+        => !string.IsNullOrWhiteSpace(email)
+           && _options.AdminEmails.Any(a => string.Equals(a?.Trim(), email.Trim(), StringComparison.OrdinalIgnoreCase));
 
     public async Task<ExternalLoginResult> AuthenticateAsync(
         string identifier, string password, CancellationToken ct = default)

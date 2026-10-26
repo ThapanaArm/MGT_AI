@@ -5,7 +5,6 @@ import { formatDateTime, formatFileSize, formatNumber, formatThb, formatUsd } fr
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.gif';
 
 export default function RagCreatePage() {
-  const [categories, setCategories] = useState([]);
   const [sources, setSources] = useState([]);
   const [models, setModels] = useState([]);
   const [runs, setRuns] = useState([]);
@@ -14,8 +13,6 @@ export default function RagCreatePage() {
   const [sourceName, setSourceName] = useState('');
   const [description, setDescription] = useState('');
   const [existingId, setExistingId] = useState('');
-  const [categoryId, setCategoryId] = useState('');
-  const [subCategoryId, setSubCategoryId] = useState('');
   const [model, setModel] = useState('');
   const [pagesPerBatch, setPagesPerBatch] = useState(3);
   const [files, setFiles] = useState([]);
@@ -46,7 +43,6 @@ export default function RagCreatePage() {
   useEffect(() => {
     loadRuns();
     loadSources();
-    api('/api/admin/rag/categories').then(setCategories).catch((err) => setError(err.message));
     api('/api/chat/models')
       .then((list) => {
         const ready = list.filter((m) => m.providerReady);
@@ -80,7 +76,6 @@ export default function RagCreatePage() {
     return () => clearInterval(timer);
   }, [jobId, jobState, loadSources, loadRuns]);
 
-  const selectedCategory = categories.find((c) => String(c.categoryId) === categoryId);
   const running = job && (job.state === 'Queued' || job.state === 'Running');
   const selectedModel = models.find((m) => m.name === model);
   const hasPdf = files.some((f) => f.name.toLowerCase().endsWith('.pdf'));
@@ -99,8 +94,6 @@ export default function RagCreatePage() {
       } else {
         form.append('sourceName', sourceName);
         if (description) form.append('description', description);
-        if (categoryId) form.append('categoryId', categoryId);
-        if (subCategoryId) form.append('subCategoryId', subCategoryId);
       }
       form.append('model', model);
       form.append('pagesPerBatch', String(pagesPerBatch));
@@ -141,14 +134,11 @@ export default function RagCreatePage() {
           name: editing.name,
           description: editing.description || null,
           isActive: editing.isActive,
-          categoryId: editing.categoryId ? Number(editing.categoryId) : null,
-          subCategoryId: editing.subCategoryId ? Number(editing.subCategoryId) : null,
         },
       });
       setEditing(null);
       setMessage(`Saved "${editing.name}"`);
       await loadSources();
-      setCategories(await api('/api/admin/rag/categories'));
     } catch (err) {
       setError(err.message);
     }
@@ -169,14 +159,12 @@ export default function RagCreatePage() {
       if (existingId === String(source.sourceId)) setExistingId('');
       setMessage(`Deleted "${source.sourceName}"`);
       await loadSources();
-      setCategories(await api('/api/admin/rag/categories'));
     } catch (err) {
       setError(err.message);
     }
   }
 
   const progressPct = job && job.pagesTotal > 0 ? Math.round((job.pagesDone / job.pagesTotal) * 100) : 0;
-  const editingCategory = categories.find((c) => String(c.categoryId) === editing?.categoryId);
   const canSubmit = files.length > 0 && model && (mode === 'existing' ? existingId : sourceName.trim());
 
   return (
@@ -237,36 +225,6 @@ export default function RagCreatePage() {
                   placeholder="What is in it, and who asked for it?"
                   maxLength={500}
                 />
-              </div>
-              <div className="field">
-                <label htmlFor="rag-cat">Category</label>
-                <select
-                  id="rag-cat"
-                  value={categoryId}
-                  onChange={(e) => { setCategoryId(e.target.value); setSubCategoryId(''); }}
-                >
-                  <option value="">— none —</option>
-                  {categories.filter((c) => c.isActive).map((c) => (
-                    <option key={c.categoryId} value={c.categoryId}>{c.categoryName}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="rag-sub">Sub category</label>
-                <select
-                  id="rag-sub"
-                  value={subCategoryId}
-                  onChange={(e) => setSubCategoryId(e.target.value)}
-                  disabled={!selectedCategory}
-                >
-                  <option value="">— none —</option>
-                  {(selectedCategory?.subCategories ?? []).filter((s) => s.isActive).map((s) => (
-                    <option key={s.subCategoryId} value={s.subCategoryId}>{s.subCategoryName}</option>
-                  ))}
-                </select>
-                {categories.length === 0 && (
-                  <div className="faint">No categories yet — add them on the "Setting RAG Category" tab.</div>
-                )}
               </div>
             </>
           ) : (
@@ -440,7 +398,6 @@ export default function RagCreatePage() {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Category</th>
                 <th className="nowrap">Status</th>
                 <th className="nowrap">Files</th>
                 <th className="nowrap">Chunks</th>
@@ -450,12 +407,12 @@ export default function RagCreatePage() {
             </thead>
             <tbody>
               {sources.length === 0 && (
-                <tr><td colSpan={7} className="empty">No RAGs yet</td></tr>
+                <tr><td colSpan={6} className="empty">No RAGs yet</td></tr>
               )}
               {sources.map((s) =>
                 editing?.sourceId === s.sourceId ? (
                   <tr key={s.sourceId}>
-                    <td colSpan={7}>
+                    <td colSpan={6}>
                       <form onSubmit={saveEdit} className="row-actions" style={{ flexWrap: 'wrap', gap: 8 }}>
                         <input
                           value={editing.name}
@@ -471,23 +428,6 @@ export default function RagCreatePage() {
                           maxLength={500}
                           style={{ minWidth: 240 }}
                         />
-                        <select
-                          value={editing.categoryId}
-                          onChange={(e) => setEditing((p) => ({ ...p, categoryId: e.target.value, subCategoryId: '' }))}
-                        >
-                          <option value="">— no category —</option>
-                          {categories.map((c) => <option key={c.categoryId} value={c.categoryId}>{c.categoryName}</option>)}
-                        </select>
-                        <select
-                          value={editing.subCategoryId}
-                          onChange={(e) => setEditing((p) => ({ ...p, subCategoryId: e.target.value }))}
-                          disabled={!editingCategory}
-                        >
-                          <option value="">— no sub category —</option>
-                          {(editingCategory?.subCategories ?? []).map((sc) => (
-                            <option key={sc.subCategoryId} value={sc.subCategoryId}>{sc.subCategoryName}</option>
-                          ))}
-                        </select>
                         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0 }}>
                           <input
                             type="checkbox"
@@ -508,11 +448,6 @@ export default function RagCreatePage() {
                       <strong>{s.sourceName}</strong>
                       {s.description && <div className="faint">{s.description}</div>}
                     </td>
-                    <td>
-                      {s.categoryName
-                        ? `${s.categoryName}${s.subCategoryName ? ` › ${s.subCategoryName}` : ''}`
-                        : <span className="faint">Uncategorised</span>}
-                    </td>
                     <td className="nowrap">
                       <span className={s.isActive ? 'badge badge-ok' : 'badge'}>{s.isActive ? 'Active' : 'Inactive'}</span>
                     </td>
@@ -528,8 +463,6 @@ export default function RagCreatePage() {
                           name: s.sourceName,
                           description: s.description ?? '',
                           isActive: s.isActive,
-                          categoryId: s.categoryId ? String(s.categoryId) : '',
-                          subCategoryId: s.subCategoryId ? String(s.subCategoryId) : '',
                         })}
                       >
                         Edit

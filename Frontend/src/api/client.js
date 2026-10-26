@@ -67,6 +67,13 @@ async function toApiError(response) {
   return new ApiError(message, response.status, code);
 }
 
+/**
+ * 401 = token expired. 403 can also mean the token is stale: the role lives inside the token, so
+ * after an administrator changes someone's role the old token keeps being refused until it is
+ * re-issued. Refreshing re-reads the role from the server, so both cases retry once after a refresh.
+ */
+const isAuthFailure = (status) => status === 401 || status === 403;
+
 // รวม request ที่ต่ออายุ token ให้เหลือครั้งเดียว แม้จะมีหลาย request เจอ 401 พร้อมกัน
 let refreshInFlight = null;
 
@@ -124,7 +131,7 @@ async function send(path, { method, body, signal, accept }) {
 export async function api(path, { method = 'GET', body, signal, skipRefresh = false } = {}) {
   let response = await send(path, { method, body, signal });
 
-  if (response.status === 401 && !skipRefresh) {
+  if (isAuthFailure(response.status) && !skipRefresh) {
     const token = await refreshAccessToken();
     if (token) {
       response = await send(path, { method, body, signal });
@@ -152,7 +159,7 @@ export async function apiForm(path, formData, { method = 'POST' } = {}) {
 
   let response = await send();
 
-  if (response.status === 401) {
+  if (isAuthFailure(response.status)) {
     const token = await refreshAccessToken();
     if (token) response = await send();
   }
@@ -168,7 +175,7 @@ export async function apiForm(path, formData, { method = 'POST' } = {}) {
 export async function download(path, fallbackFileName) {
   let response = await send(path, { method: 'GET', accept: 'text/csv' });
 
-  if (response.status === 401) {
+  if (isAuthFailure(response.status)) {
     const token = await refreshAccessToken();
     if (token) response = await send(path, { method: 'GET', accept: 'text/csv' });
   }

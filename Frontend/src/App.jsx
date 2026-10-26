@@ -16,8 +16,8 @@ import ProjectsPage from './pages/ProjectsPage';
 import SkillsPage from './pages/SkillsPage';
 import ChangePasswordPage from './pages/ChangePasswordPage';
 import SectionLayout from './components/SectionLayout';
-import RagCategoriesPage from './pages/RagCategoriesPage';
 import RagCreatePage from './pages/RagCreatePage';
+import DataSourceCategoriesPage from './pages/DataSourceCategoriesPage';
 
 const AUDITING_TABS = [
   { to: '/logs/chat', label: 'Search chat logs' },
@@ -30,8 +30,8 @@ const ADMIN_TABS = [
   { to: '/admin/model-pricing', label: 'Model pricing / exchange rate' },
   { to: '/admin/users', label: 'User management' },
   { to: '/admin/data-sources', label: 'Data source registry' },
+  { to: '/admin/data-source-categories', label: 'Setting Category' },
   { to: '/admin/data-source-access', label: 'Data source access' },
-  { to: '/admin/rag-categories', label: 'Setting RAG Category' },
   { to: '/admin/rag-create', label: 'Create RAG' },
 ];
 
@@ -82,8 +82,8 @@ export default function App() {
           <Route path="/admin/model-pricing" element={<ModelPricingPage />} />
           <Route path="/admin/users" element={<UsersPage />} />
           <Route path="/admin/data-sources" element={<DataSourcesPage />} />
+          <Route path="/admin/data-source-categories" element={<DataSourceCategoriesPage />} />
           <Route path="/admin/data-source-access" element={<DataSourceGrantsPage />} />
-          <Route path="/admin/rag-categories" element={<RagCategoriesPage />} />
           <Route path="/admin/rag-create" element={<RagCreatePage />} />
         </Route>
       </Route>

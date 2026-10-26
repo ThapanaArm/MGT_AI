@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import ThemeToggle from './ThemeToggle';
 
 const ROLE_LABELS = {
   Admin: 'Administrator',
@@ -158,6 +159,10 @@ export default function Layout() {
               <div className="sidebar-meta">
                 {user?.username} · {ROLE_LABELS[role] ?? role}
                 {user?.department ? ` · ${user.department}` : ''}
+              </div>
+              <div className="sidebar-theme-row">
+                <span>Dark mode</span>
+                <ThemeToggle />
               </div>
               <div className="row-actions">
                 {user?.authSource !== 'External' && (

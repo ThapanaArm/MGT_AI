@@ -2,40 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace MgtAiAuthen.Api.Contracts;
 
-public record RagSubCategoryDto(
-    int SubCategoryId, int CategoryId, string SubCategoryName, string? Description, bool IsActive, int SourceCount);
-
-public record RagCategoryDto(
-    int CategoryId, string CategoryName, string? Description, bool IsActive, int SourceCount,
-    IReadOnlyList<RagSubCategoryDto> SubCategories);
-
-public record RagCategoryRequest
-{
-    [Required(ErrorMessage = "Category name is required")]
-    [StringLength(150)]
-    public string Name { get; init; } = string.Empty;
-
-    [StringLength(500)]
-    public string? Description { get; init; }
-
-    public bool IsActive { get; init; } = true;
-}
-
-public record RagSubCategoryRequest
-{
-    /// <summary>Required when creating; ignored on update (a sub category is not moved between categories).</summary>
-    public int CategoryId { get; init; }
-
-    [Required(ErrorMessage = "Sub category name is required")]
-    [StringLength(150)]
-    public string Name { get; init; } = string.Empty;
-
-    [StringLength(500)]
-    public string? Description { get; init; }
-
-    public bool IsActive { get; init; } = true;
-}
-
 public record RagSourceUpdateRequest
 {
     [Required(ErrorMessage = "RAG name is required")]
@@ -46,14 +12,11 @@ public record RagSourceUpdateRequest
     public string? Description { get; init; }
 
     public bool IsActive { get; init; } = true;
-    public int? CategoryId { get; init; }
-    public int? SubCategoryId { get; init; }
 }
 
-/// <summary>One RAG knowledge base (a Rag-type data source) with where it sits in the category tree.</summary>
+/// <summary>One RAG knowledge base (a Rag-type data source) - its category is set in the Data Source Registry.</summary>
 public record RagSourceDto(
     int SourceId, string SourceName, string? Description, bool IsActive,
-    int? CategoryId, string? CategoryName, int? SubCategoryId, string? SubCategoryName,
     int ChunkCount, int FileCount, DateTime CreatedAt);
 
 /// <summary>Multipart form for "Create RAG" — files are the PDFs / images to OCR.</summary>
@@ -67,9 +30,6 @@ public class RagCreateForm
 
     [StringLength(500)]
     public string? Description { get; set; }
-
-    public int? CategoryId { get; set; }
-    public int? SubCategoryId { get; set; }
 
     /// <summary>The vision-capable model that reads (OCRs) the pages — must have active pricing.</summary>
     [Required(ErrorMessage = "Choose the model that will read the files")]

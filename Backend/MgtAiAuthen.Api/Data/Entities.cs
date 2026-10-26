@@ -72,8 +72,9 @@ public static class AuditActions
     public const string DataSourceRevoked = "DATASOURCE_REVOKED";
     public const string DataSourceFetched = "DATASOURCE_FETCHED";
     public const string DataSourceFetchFailed = "DATASOURCE_FETCH_FAILED";
+    public const string DataSourceExported = "DATASOURCE_EXPORTED";
 
-    public const string RagCategoryChanged = "RAG_CATEGORY_CHANGED";
+    public const string DataSourceCategoryChanged = "DATASOURCE_CATEGORY_CHANGED";
     public const string RagCreated = "RAG_CREATED";
     public const string RagExported = "RAG_EXPORTED";
 
@@ -341,6 +342,13 @@ public class ChatMessage
     /// <summary>Computed in the database — read-only, never written.</summary>
     public int TotalTokens { get; private set; }
 
+    /// <summary>
+    /// The AI-written data query behind this answer when its result was cut off in the chat - the
+    /// "download full data" button re-runs it without the row limit. Server-side only: the client
+    /// can never supply the query.
+    /// </summary>
+    public string? DataExportQuery { get; set; }
+
     public decimal? InputCostUsd { get; set; }
     public decimal? OutputCostUsd { get; set; }
     public decimal? CacheCostUsd { get; set; }
@@ -500,8 +508,10 @@ public static class DataSourceTypes
     public const string SharePoint = "SharePoint";
     /// <summary>A local knowledge base of pre-chunked, embedded text — retrieved by semantic similarity to the current question, not queried live against an external system. See RagConnector.cs.</summary>
     public const string Rag = "Rag";
+    /// <summary>A Supabase project - its Postgres database queried with SQL, or its REST (PostgREST) API. See SupabaseConnector.cs.</summary>
+    public const string Supabase = "Supabase";
 
-    public static readonly string[] All = [Api, DataLake, LocalFolder, SharePoint, Rag];
+    public static readonly string[] All = [Api, DataLake, LocalFolder, SharePoint, Rag, Supabase];
 
     public static bool IsKnown(string? type)
         => !string.IsNullOrWhiteSpace(type) && All.Contains(type.Trim(), StringComparer.OrdinalIgnoreCase);
@@ -550,13 +560,13 @@ public class DataSource
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedBy { get; set; }
 
-    /// <summary>Only meaningful for <see cref="DataSourceTypes.Rag"/> sources — groups knowledge bases for the admin.</summary>
-    public int? RagCategoryId { get; set; }
-    public int? RagSubCategoryId { get; set; }
+    /// <summary>Optional grouping in the Data Source Registry - applies to every source type.</summary>
+    public int? CategoryId { get; set; }
+    public int? SubCategoryId { get; set; }
 }
 
-/// <summary>dbo.RagCategories — top-level grouping for RAG knowledge bases.</summary>
-public class RagCategory
+/// <summary>dbo.DataSourceCategories - top-level grouping for Data Source Registry entries.</summary>
+public class DataSourceCategory
 {
     public int CategoryId { get; set; }
     public string CategoryName { get; set; } = string.Empty;
@@ -567,7 +577,7 @@ public class RagCategory
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedBy { get; set; }
 
-    public List<RagSubCategory> SubCategories { get; set; } = [];
+    public List<DataSourceSubCategory> SubCategories { get; set; } = [];
 }
 
 /// <summary>dbo.RagRuns - one "Create RAG" run with its token usage and frozen cost; no FK so history outlives a deleted RAG.</summary>
@@ -597,8 +607,8 @@ public class RagRun
     public DateTime? FinishedAt { get; set; }
 }
 
-/// <summary>dbo.RagSubCategories — a second level under a <see cref="RagCategory"/>.</summary>
-public class RagSubCategory
+/// <summary>dbo.DataSourceSubCategories - a second level under a <see cref="DataSourceCategory"/>.</summary>
+public class DataSourceSubCategory
 {
     public int SubCategoryId { get; set; }
     public int CategoryId { get; set; }
@@ -610,7 +620,7 @@ public class RagSubCategory
     public DateTime? UpdatedAt { get; set; }
     public string? UpdatedBy { get; set; }
 
-    public RagCategory? Category { get; set; }
+    public DataSourceCategory? Category { get; set; }
 }
 
 /// <summary>

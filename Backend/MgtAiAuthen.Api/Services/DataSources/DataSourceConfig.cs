@@ -31,6 +31,8 @@ public static class DataSourceConfig
         // than listed here, since exactly one set is required depending on the mode. See
         // PowerBiConnectionTester for the admin-side prerequisites this cannot check.
         [DataSourceTypes.DataLake] = ["tenantId", "clientId"],
+        // Supabase - "connectionMode" Sql (host + sqlQuery) or Rest (projectUrl + restQuery); validated below.
+        [DataSourceTypes.Supabase] = [],
     };
 
     /// <summary>Keys whose value never needs to reach the frontend even unmasked — currently none, but kept for symmetry with the secret column.</summary>
@@ -101,6 +103,13 @@ public static class DataSourceConfig
             }
         }
 
+        ValidateQueryMode(sourceType, config);
+
+        if (string.Equals(sourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase))
+        {
+            ValidateSupabase(config);
+        }
+
         if (string.Equals(sourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase))
         {
             // Blank = PowerBi, so every source registered before this field existed is unaffected.
@@ -114,7 +123,7 @@ public static class DataSourceConfig
             bool isGraphQl = string.Equals(mode, "GraphQL", StringComparison.OrdinalIgnoreCase);
             string modeLabel = isWarehouse ? "Warehouse" : isGraphQl ? "GraphQL" : "Power BI";
             string[] modeRequired = isWarehouse
-                ? ["sqlEndpoint", "database", "sqlQuery"]
+                ? (IsGeneratedMode(config) ? ["sqlEndpoint", "database"] : ["sqlEndpoint", "database", "sqlQuery"])
                 : isGraphQl
                     ? ["graphqlEndpoint", "graphqlQuery"]
                     : ["datasetId", "daxQuery"];
@@ -140,6 +149,92 @@ public static class DataSourceConfig
                 {
                     throw new AppException($"graphqlVariables is not valid JSON: {ex.Message}");
                 }
+            }
+        }
+    }
+    private static void ValidateSupabase(Dictionary<string, string> config)
+    {
+        // Blank = Sql, so a source saved without a mode behaves as the default.
+        string mode = config.GetValueOrDefault("connectionMode", "").Trim();
+        if (mode.Length > 0 && !new[] { "Sql", "Rest" }.Contains(mode, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new AppException("connectionMode must be Sql or Rest");
+        }
+
+        bool isRest = string.Equals(mode, "Rest", StringComparison.OrdinalIgnoreCase);
+        bool generated = IsGeneratedMode(config);
+        string[] modeRequired = isRest
+            ? (generated ? ["projectUrl"] : ["projectUrl", "restQuery"])
+            : (generated ? ["host"] : ["host", "sqlQuery"]);
+
+        List<string> missing = modeRequired
+            .Where(key => string.IsNullOrWhiteSpace(config.GetValueOrDefault(key)))
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            throw new AppException(
+                $"Missing required setting(s) for Supabase ({(isRest ? "REST" : "SQL")} mode): {string.Join(", ", missing)}");
+        }
+
+        if (isRest)
+        {
+            string url = SupabaseQuery.NormalizeProjectUrl(config.GetValueOrDefault("projectUrl", ""));
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) || !SupabaseQuery.IsAllowedScheme(uri))
+            {
+                throw new AppException("projectUrl must be an https:// address, e.g. https://abcdefgh.supabase.co");
+            }
+        }
+        else
+        {
+            string port = config.GetValueOrDefault("port", "").Trim();
+            if (port.Length > 0 && (!int.TryParse(port, out int number) || number is < 1 or > 65535))
+            {
+                throw new AppException("port must be a number between 1 and 65535 (5432 direct, 6543 for the transaction pooler)");
+            }
+        }
+
+        string timeoutMinutes = config.GetValueOrDefault("timeoutMinutes", "").Trim();
+        if (timeoutMinutes.Length > 0
+            && (!double.TryParse(timeoutMinutes, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double minutes)
+                || minutes <= 0))
+        {
+            throw new AppException("timeoutMinutes must be a positive number");
+        }
+    }
+    private static bool IsGeneratedMode(Dictionary<string, string> config)
+        => string.Equals(config.GetValueOrDefault("queryMode", "").Trim(), "Generated", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>queryMode: blank/Fixed = run the queries the admin typed; Generated = the AI writes a query per question.</summary>
+    private static void ValidateQueryMode(string sourceType, Dictionary<string, string> config)
+    {
+        string mode = config.GetValueOrDefault("queryMode", "").Trim();
+        if (mode.Length == 0) return;
+
+        if (!new[] { "Fixed", "Generated" }.Contains(mode, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new AppException("queryMode must be Fixed or Generated");
+        }
+
+        if (!IsGeneratedMode(config)) return;
+
+        bool supported = string.Equals(sourceType, DataSourceTypes.Supabase, StringComparison.OrdinalIgnoreCase)
+            || (string.Equals(sourceType, DataSourceTypes.DataLake, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(config.GetValueOrDefault("connectionMode", "").Trim(), "Warehouse", StringComparison.OrdinalIgnoreCase));
+
+        if (!supported)
+        {
+            throw new AppException(
+                "queryMode Generated is available for Supabase and for Data Lake sources in Warehouse mode only");
+        }
+
+        foreach (string key in new[] { "generatedMaxRows", "generatedMaxChars" })
+        {
+            string value = config.GetValueOrDefault(key, "").Trim();
+            if (value.Length > 0 && (!int.TryParse(value, out int n) || n < 1))
+            {
+                throw new AppException($"{key} must be a positive whole number");
             }
         }
     }

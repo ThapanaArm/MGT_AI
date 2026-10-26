@@ -1,5 +1,6 @@
 using MgtAiAuthen.Api.Contracts;
 using Microsoft.Data.SqlClient;
+using System.Data.Common;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -333,6 +334,13 @@ public class PowerBiConnectionTester(IHttpClientFactory httpClientFactory) : IDa
 
         string mode = DataLakeMode.Resolve(config);
 
+        if (mode == DataLakeMode.Warehouse
+            && string.Equals(config.GetValueOrDefault("queryMode", "").Trim(), "Generated", StringComparison.OrdinalIgnoreCase))
+        {
+            return await QuerySchema.TestAsync(
+                httpClientFactory, config, secret, GeneratedQueryPlanner.Dialect.TSql, ct);
+        }
+
         if (mode == DataLakeMode.Warehouse)
         {
             FabricWarehouseQueryResult wh = await FabricWarehouseQuery.ExecuteAsync(
@@ -534,7 +542,9 @@ internal static class PowerBiQuery
     }
 }
 
-internal record FabricWarehouseQueryResult(bool Success, string Message, string? FormattedText, int? RowCount, bool Truncated = false);
+internal record FabricWarehouseQueryResult(
+    bool Success, string Message, string? FormattedText, int? RowCount, bool Truncated = false,
+    IReadOnlyList<QueryTable>? Tables = null);
 
 /// <summary>
 /// Runs one or more T-SQL statements — a plain semicolon-separated batch, e.g.
@@ -599,7 +609,7 @@ internal static class FabricWarehouseQuery
             };
 
             await using SqlDataReader reader = await command.ExecuteReaderAsync(ct);
-            return await FormatAllResultSetsAsync(reader, ct);
+            return await FormatAllResultSetsAsync(reader, ct, DataSourceFetchLimits.Resolve(config));
         }
         catch (SqlException ex)
         {
@@ -629,10 +639,11 @@ internal static class FabricWarehouseQuery
     /// A statement that produces no result set (FieldCount 0 — e.g. a leading "SET NOCOUNT ON;")
     /// is skipped rather than emitting an empty table.
     /// </summary>
-    private static async Task<FabricWarehouseQueryResult> FormatAllResultSetsAsync(
-        SqlDataReader reader, CancellationToken ct)
+    internal static async Task<FabricWarehouseQueryResult> FormatAllResultSetsAsync(
+        DbDataReader reader, CancellationToken ct, FetchCaps caps)
     {
         var resultSets = new List<(string[] Columns, List<object?[]> Rows)>();
+        bool rowCapHit = false;
 
         do
         {
@@ -640,34 +651,47 @@ internal static class FabricWarehouseQuery
 
             string[] columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
             var rows = new List<object?[]>();
-            while (rows.Count < DataSourceFetchLimits.MaxWarehouseRows && await reader.ReadAsync(ct))
+            while (rows.Count < caps.MaxRows && await reader.ReadAsync(ct))
             {
                 var row = new object?[reader.FieldCount];
                 reader.GetValues(row!);
                 rows.Add(row);
             }
+
+            // Reaching the row cap with rows still waiting means the result was cut - say so, so the AI
+            // does not report a total off partial data.
+            if (rows.Count >= caps.MaxRows && await reader.ReadAsync(ct)) rowCapHit = true;
+
             resultSets.Add((columns, rows));
         }
         while (await reader.NextResultAsync(ct));
 
         if (resultSets.Count == 0)
         {
-            return new FabricWarehouseQueryResult(true, "OK", "", 0, false);
+            return new FabricWarehouseQueryResult(true, "OK", "", 0, false, []);
+        }
+
+        List<QueryTable> tables = resultSets.Select(rs => new QueryTable(rs.Columns, rs.Rows)).ToList();
+
+        if (caps.SkipText)
+        {
+            // Exporting to a file: the typed rows are all that is needed, so skip building the Markdown text.
+            return new FabricWarehouseQueryResult(true, "OK", "", tables.Sum(t => t.Rows.Count), rowCapHit, tables);
         }
 
         bool multiple = resultSets.Count > 1;
         var sb = new StringBuilder();
         int totalWritten = 0;
-        bool truncated = false;
+        bool truncated = rowCapHit;
 
-        for (int i = 0; i < resultSets.Count && !truncated; i++)
+        for (int i = 0; i < resultSets.Count; i++)
         {
             (string[] columns, List<object?[]> rows) = resultSets[i];
 
             if (multiple)
             {
                 string header = $"### Query {i + 1}\n\n";
-                if (sb.Length + header.Length > DataSourceFetchLimits.MaxChars) { truncated = true; break; }
+                if (sb.Length + header.Length > caps.MaxChars) { truncated = true; break; }
                 sb.Append(header);
             }
 
@@ -677,7 +701,7 @@ internal static class FabricWarehouseQuery
             foreach (object?[] row in rows)
             {
                 string line = "| " + string.Join(" | ", row.Select(FormatCell)) + " |\n";
-                if (sb.Length + line.Length > DataSourceFetchLimits.MaxChars)
+                if (sb.Length + line.Length > caps.MaxChars)
                 {
                     truncated = true;
                     break;
@@ -686,17 +710,26 @@ internal static class FabricWarehouseQuery
                 totalWritten++;
             }
 
-            if (multiple && !truncated) sb.Append('\n');
+            if (multiple) sb.Append('\n');
+            if (sb.Length > caps.MaxChars) break;
         }
 
-        return new FabricWarehouseQueryResult(true, "OK", sb.ToString(), totalWritten, truncated);
+        return new FabricWarehouseQueryResult(true, "OK", sb.ToString(), totalWritten, truncated, tables);
     }
 
     private static string FormatCell(object? value)
-        => value is null or DBNull
-            ? ""
-            : (Convert.ToString(value, CultureInfo.InvariantCulture) ?? "")
-                .Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
+    {
+        string text = value switch
+        {
+            null or DBNull => "",
+            byte[] bytes => $"<{bytes.Length} bytes>",
+            Array array => "{" + string.Join(",", array.Cast<object?>().Select(
+                item => Convert.ToString(item, CultureInfo.InvariantCulture))) + "}",
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "",
+        };
+
+        return text.Replace("|", "\\|").Replace("\r", " ").Replace("\n", " ");
+    }
 }
 
 internal record FabricGraphQlResult(bool Success, string Message, string? RawJson);
