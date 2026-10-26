@@ -205,7 +205,7 @@ public partial class GeneratedQueryPlanner(
             // figures mean (which column is the sales amount, how dates are grouped). Examples only.
             sb.Append("\n\nExample queries written by the data owner (use them as a guide to the columns and meaning; ")
                 .Append("adapt them, add the filters this question needs, and keep the result small):\n")
-                .Append(adminQueries.Length > 9000 ? adminQueries[..9000] : adminQueries);
+                .Append(adminQueries.Length > 11000 ? adminQueries[..11000] : adminQueries);
         }
 
         return sb.ToString();
